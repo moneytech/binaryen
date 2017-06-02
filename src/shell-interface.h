@@ -142,7 +142,8 @@ struct ShellExternalInterface : ModuleInstance::ExternalInterface {
       std::cout << "exit()\n";
       throw ExitException();
     }
-    std::cout << "callImport " << import->name.str << "\n";
+    Fatal() << "callImport: unknown import: " << import->module.str << "."
+            << import->name.str;
     WASM_UNREACHABLE();
   }
 
