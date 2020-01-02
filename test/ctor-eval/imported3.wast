@@ -4,11 +4,9 @@
   ;; imports must not be used
   (import "env" "tempDoublePtr" (global $tempDoublePtr i32))
   (export "test1" $test1)
-  (export "test2" $test2)
-  (export "test3" $test3)
-  (global $mine (mut i32) (get_global $tempDoublePtr)) ;; BAD, if used
+  (global $mine (mut i32) (global.get $tempDoublePtr)) ;; BAD, if used
   (func $test1
-    (drop (get_global $mine))
+    (drop (global.get $mine))
     (i32.store8 (i32.const 13) (i32.const 115)) ;; we never get here.
   )
 )

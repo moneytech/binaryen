@@ -1,13 +1,10 @@
 (module
- (import "env" "memory" (memory $0 256 256))
- (import "env" "table" (table 0 0 anyfunc))
- (import "env" "memoryBase" (global $memoryBase i32))
- (import "env" "tableBase" (global $tableBase i32))
+ (type $i32_i32_=>_i32 (func (param i32 i32) (result i32)))
  (export "add" (func $add))
- (func $add (param $0 i32) (param $1 i32) (result i32)
+ (func $add (; 0 ;) (; has Stack IR ;) (param $0 i32) (param $1 i32) (result i32)
   (i32.add
-   (get_local $0)
-   (get_local $1)
+   (local.get $0)
+   (local.get $1)
   )
  )
 )

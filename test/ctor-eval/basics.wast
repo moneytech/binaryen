@@ -2,7 +2,7 @@
   (type $v (func))
   (memory 256 256)
   (data (i32.const 10) "waka waka waka waka waka")
-  (table 1 1 anyfunc)
+  (table 1 1 funcref)
   (elem (i32.const 0) $call-indirect)
   (export "test1" $test1)
   (export "test2" $test2)
@@ -10,12 +10,14 @@
   (func $test1
     (drop (i32.const 0)) ;; no work at all, really
     (call $safe-to-call) ;; safe to call
-    (call_indirect $v (i32.const 0)) ;; safe to call
+    (call_indirect (type $v) (i32.const 0)) ;; safe to call
   )
   (func $test2
     (drop (i32.load (i32.const 12))) ;; a safe load
-    (drop (i32.load16 (i32.const 12)))
-    (drop (i32.load8 (i32.const 12)))
+    (drop (i32.load16_s (i32.const 12)))
+    (drop (i32.load8_s (i32.const 12)))
+    (drop (i32.load16_u (i32.const 12)))
+    (drop (i32.load8_u (i32.const 12)))
   )
   (func $test3
     (i32.store (i32.const 12) (i32.const 115)) ;; a safe store, should alter memory

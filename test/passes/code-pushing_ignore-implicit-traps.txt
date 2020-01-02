@@ -1,105 +1,105 @@
 (module
- (type $0 (func))
- (type $1 (func (result i32)))
- (memory $0 0)
- (func $push1 (type $0)
+ (type $none_=>_none (func))
+ (type $none_=>_i32 (func (result i32)))
+ (memory $0 1)
+ (func $push1 (; 0 ;)
   (local $x i32)
   (block $out
    (br_if $out
     (i32.const 2)
    )
-   (set_local $x
+   (local.set $x
     (i32.const 1)
    )
    (drop
-    (get_local $x)
+    (local.get $x)
    )
   )
  )
- (func $push2 (type $0)
-  (local $x i32)
-  (local $y i32)
-  (block $out
-   (br_if $out
-    (i32.const 2)
-   )
-   (set_local $x
-    (i32.const 1)
-   )
-   (set_local $y
-    (i32.const 3)
-   )
-   (drop
-    (get_local $x)
-   )
-   (drop
-    (get_local $y)
-   )
-  )
- )
- (func $push1-twice (type $0)
-  (local $x i32)
-  (block $out
-   (br_if $out
-    (i32.const 2)
-   )
-   (br_if $out
-    (i32.const 3)
-   )
-   (set_local $x
-    (i32.const 1)
-   )
-   (drop
-    (get_local $x)
-   )
-  )
- )
- (func $push1-twiceb (type $0)
-  (local $x i32)
-  (block $out
-   (br_if $out
-    (i32.const 2)
-   )
-   (nop)
-   (br_if $out
-    (i32.const 3)
-   )
-   (set_local $x
-    (i32.const 1)
-   )
-   (drop
-    (get_local $x)
-   )
-  )
- )
- (func $push2-twice (type $0)
+ (func $push2 (; 1 ;)
   (local $x i32)
   (local $y i32)
   (block $out
    (br_if $out
     (i32.const 2)
    )
-   (br_if $out
-    (i32.const 2)
-   )
-   (set_local $x
+   (local.set $x
     (i32.const 1)
    )
-   (set_local $y
+   (local.set $y
     (i32.const 3)
    )
    (drop
-    (get_local $x)
+    (local.get $x)
    )
    (drop
-    (get_local $y)
+    (local.get $y)
    )
   )
  )
- (func $ignore-last (type $0)
+ (func $push1-twice (; 2 ;)
   (local $x i32)
   (block $out
-   (set_local $x
+   (br_if $out
+    (i32.const 2)
+   )
+   (br_if $out
+    (i32.const 3)
+   )
+   (local.set $x
+    (i32.const 1)
+   )
+   (drop
+    (local.get $x)
+   )
+  )
+ )
+ (func $push1-twiceb (; 3 ;)
+  (local $x i32)
+  (block $out
+   (br_if $out
+    (i32.const 2)
+   )
+   (nop)
+   (br_if $out
+    (i32.const 3)
+   )
+   (local.set $x
+    (i32.const 1)
+   )
+   (drop
+    (local.get $x)
+   )
+  )
+ )
+ (func $push2-twice (; 4 ;)
+  (local $x i32)
+  (local $y i32)
+  (block $out
+   (br_if $out
+    (i32.const 2)
+   )
+   (br_if $out
+    (i32.const 2)
+   )
+   (local.set $x
+    (i32.const 1)
+   )
+   (local.set $y
+    (i32.const 3)
+   )
+   (drop
+    (local.get $x)
+   )
+   (drop
+    (local.get $y)
+   )
+  )
+ )
+ (func $ignore-last (; 5 ;)
+  (local $x i32)
+  (block $out
+   (local.set $x
     (i32.const 1)
    )
    (br_if $out
@@ -107,10 +107,10 @@
    )
   )
  )
- (func $ignore-last2 (type $0)
+ (func $ignore-last2 (; 6 ;)
   (local $x i32)
   (block $out
-   (set_local $x
+   (local.set $x
     (i32.const 1)
    )
    (nop)
@@ -120,40 +120,40 @@
    )
   )
  )
- (func $push-if (type $0)
+ (func $push-if (; 7 ;)
   (local $x i32)
   (block $out
    (if
     (i32.const 2)
     (nop)
    )
-   (set_local $x
+   (local.set $x
     (i32.const 1)
    )
    (drop
-    (get_local $x)
+    (local.get $x)
    )
   )
  )
- (func $push-dropped (type $1) (result i32)
+ (func $push-dropped (; 8 ;) (result i32)
   (local $x i32)
-  (block $out i32
+  (block $out (result i32)
    (drop
     (br_if $out
      (i32.const 2)
      (i32.const 3)
     )
    )
-   (set_local $x
+   (local.set $x
     (i32.const 1)
    )
    (drop
-    (get_local $x)
+    (local.get $x)
    )
    (i32.const 4)
   )
  )
- (func $push-past-stuff (type $0)
+ (func $push-past-stuff (; 9 ;)
   (local $x i32)
   (block $out
    (call $push-past-stuff)
@@ -163,23 +163,23 @@
    (br_if $out
     (i32.const 2)
    )
-   (set_local $x
+   (local.set $x
     (i32.const 1)
    )
    (drop
-    (get_local $x)
+    (local.get $x)
    )
   )
  )
- (func $fail-then-push (type $0)
+ (func $fail-then-push (; 10 ;)
   (local $x i32)
   (local $y i32)
   (block $out
-   (set_local $x
+   (local.set $x
     (i32.const 1)
    )
    (drop
-    (get_local $x)
+    (local.get $x)
    )
    (br_if $out
     (i32.const 2)
@@ -187,102 +187,102 @@
    (br_if $out
     (i32.const 3)
    )
-   (set_local $y
+   (local.set $y
     (i32.const 1)
    )
    (drop
-    (get_local $x)
+    (local.get $x)
    )
    (drop
-    (get_local $y)
+    (local.get $y)
    )
   )
  )
- (func $used (type $0)
+ (func $used (; 11 ;)
   (local $x i32)
   (block $out
-   (set_local $x
+   (local.set $x
     (i32.const 1)
    )
    (br_if $out
-    (get_local $x)
+    (local.get $x)
    )
    (drop
-    (get_local $x)
+    (local.get $x)
    )
   )
  )
- (func $not-sfa (type $0)
+ (func $not-sfa (; 12 ;)
   (local $x i32)
-  (set_local $x
+  (local.set $x
    (i32.const 1)
   )
   (block $out
-   (set_local $x
+   (local.set $x
     (i32.const 1)
    )
    (br_if $out
     (i32.const 2)
    )
    (drop
-    (get_local $x)
+    (local.get $x)
    )
   )
  )
- (func $not-sfa2 (type $0)
+ (func $not-sfa2 (; 13 ;)
   (local $x i32)
   (drop
-   (get_local $x)
+   (local.get $x)
   )
   (block $out
-   (set_local $x
+   (local.set $x
     (i32.const 1)
    )
    (br_if $out
     (i32.const 2)
    )
    (drop
-    (get_local $x)
+    (local.get $x)
    )
   )
  )
- (func $used-out (type $0)
+ (func $used-out (; 14 ;)
   (local $x i32)
   (block $out
-   (set_local $x
+   (local.set $x
     (i32.const 1)
    )
    (br_if $out
     (i32.const 2)
    )
    (drop
-    (get_local $x)
+    (local.get $x)
    )
   )
   (drop
-   (get_local $x)
+   (local.get $x)
   )
  )
- (func $value-might-interfere (type $0)
+ (func $value-might-interfere (; 15 ;)
   (local $x i32)
   (block $out
    (br_if $out
     (i32.const 2)
    )
-   (set_local $x
+   (local.set $x
     (i32.load
      (i32.const 0)
     )
    )
    (drop
-    (get_local $x)
+    (local.get $x)
    )
   )
  )
- (func $value-interferes (type $0)
+ (func $value-interferes (; 16 ;)
   (local $x i32)
   (block $out
-   (set_local $x
+   (local.set $x
     (i32.load
      (i32.const 0)
     )
@@ -295,14 +295,14 @@
     (i32.const 2)
    )
    (drop
-    (get_local $x)
+    (local.get $x)
    )
   )
  )
- (func $value-interferes-accumulation (type $0)
+ (func $value-interferes-accumulation (; 17 ;)
   (local $x i32)
   (block $out
-   (set_local $x
+   (local.set $x
     (i32.load
      (i32.const 0)
     )
@@ -317,14 +317,14 @@
     (i32.const 2)
    )
    (drop
-    (get_local $x)
+    (local.get $x)
    )
   )
  )
- (func $value-interferes-in-pushpoint (type $0)
+ (func $value-interferes-in-pushpoint (; 18 ;)
   (local $x i32)
   (block $out
-   (set_local $x
+   (local.set $x
     (i32.load
      (i32.const 0)
     )
@@ -334,125 +334,125 @@
     (call $value-interferes)
    )
    (drop
-    (get_local $x)
+    (local.get $x)
    )
   )
  )
- (func $values-might-interfere (type $0)
+ (func $values-might-interfere (; 19 ;)
   (local $x i32)
   (local $y i32)
   (block $out
-   (set_local $x
+   (local.set $x
     (call $push-dropped)
    )
-   (set_local $y
+   (local.set $y
     (call $push-dropped)
    )
    (br_if $out
     (i32.const 2)
    )
    (drop
-    (get_local $x)
+    (local.get $x)
    )
    (drop
-    (get_local $y)
+    (local.get $y)
    )
   )
  )
- (func $unpushed-interferes (type $0)
+ (func $unpushed-interferes (; 20 ;)
   (local $x i32)
   (local $y i32)
   (block $out
-   (set_local $x
+   (local.set $x
     (call $push-dropped)
    )
-   (set_local $y
+   (local.set $y
     (call $push-dropped)
    )
    (br_if $out
     (i32.const 2)
    )
    (drop
-    (get_local $x)
+    (local.get $x)
    )
    (drop
-    (get_local $y)
+    (local.get $y)
    )
   )
   (drop
-   (get_local $y)
+   (local.get $y)
   )
  )
- (func $unpushed-ignorable (type $0)
+ (func $unpushed-ignorable (; 21 ;)
   (local $x i32)
   (local $y i32)
   (block $out
-   (set_local $x
+   (local.set $x
     (i32.const 1)
    )
    (br_if $out
     (i32.const 2)
    )
-   (set_local $y
+   (local.set $y
     (i32.const 3)
    )
    (drop
-    (get_local $x)
+    (local.get $x)
    )
    (drop
-    (get_local $y)
+    (local.get $y)
    )
   )
   (drop
-   (get_local $x)
+   (local.get $x)
   )
  )
- (func $unpushed-ignorable-side-effect (type $0)
+ (func $unpushed-ignorable-side-effect (; 22 ;)
   (local $x i32)
   (local $y i32)
   (block $out
-   (set_local $x
+   (local.set $x
     (call $push-dropped)
    )
    (br_if $out
     (i32.const 2)
    )
-   (set_local $y
+   (local.set $y
     (i32.const 3)
    )
    (drop
-    (get_local $x)
+    (local.get $x)
    )
    (drop
-    (get_local $y)
+    (local.get $y)
    )
   )
  )
- (func $unpushed-side-effect-into-drop (type $0)
+ (func $unpushed-side-effect-into-drop (; 23 ;)
   (local $x i32)
   (block $out
-   (set_local $x
+   (local.set $x
     (call $push-dropped)
    )
    (br_if $out
     (i32.const 1)
    )
    (drop
-    (get_local $x)
+    (local.get $x)
    )
   )
  )
- (func $unpushed-side-effect-into-if (type $0)
+ (func $unpushed-side-effect-into-if (; 24 ;)
   (local $x i32)
   (block $out
-   (set_local $x
+   (local.set $x
     (call $push-dropped)
    )
    (br_if $out
     (i32.const 1)
    )
    (if
-    (get_local $x)
+    (local.get $x)
     (nop)
    )
   )

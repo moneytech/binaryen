@@ -19,39 +19,48 @@
 
 #include <ostream>
 
-#include "wasm.h"
 #include "pass.h"
+#include "wasm.h"
 
 namespace wasm {
 
 struct WasmPrinter {
-  static std::ostream& printModule(Module* module, std::ostream& o) {
-    PassRunner passRunner(module);
-    passRunner.setIsNested(true);
-    passRunner.add<Printer>(&o);
-    passRunner.run();
-    return o;
-  }
+  static std::ostream& printModule(Module* module, std::ostream& o);
 
-  static std::ostream& printModule(Module* module) {
-    return printModule(module, std::cout);
-  }
+  static std::ostream& printModule(Module* module);
 
-  static std::ostream& printExpression(Expression* expression, std::ostream& o, bool minify = false, bool full = false);
+  static std::ostream& printExpression(Expression* expression,
+                                       std::ostream& o,
+                                       bool minify = false,
+                                       bool full = false);
+
+  static std::ostream&
+  printStackInst(StackInst* inst, std::ostream& o, Function* func = nullptr);
+
+  static std::ostream&
+  printStackIR(StackIR* ir, std::ostream& o, Function* func = nullptr);
 };
 
-}
+} // namespace wasm
 
 namespace std {
 
-inline std::ostream& operator<<(std::ostream& o, wasm::Module* module) {
-  return wasm::WasmPrinter::printModule(module, o);
+inline std::ostream& operator<<(std::ostream& o, wasm::Module& module) {
+  return wasm::WasmPrinter::printModule(&module, o);
 }
 
-inline std::ostream& operator<<(std::ostream& o, wasm::Expression* expression) {
-  return wasm::WasmPrinter::printExpression(expression, o);
+inline std::ostream& operator<<(std::ostream& o, wasm::Expression& expression) {
+  return wasm::WasmPrinter::printExpression(&expression, o);
 }
 
+inline std::ostream& operator<<(std::ostream& o, wasm::StackInst& inst) {
+  return wasm::WasmPrinter::printStackInst(&inst, o);
 }
+
+inline std::ostream& operator<<(std::ostream& o, wasm::StackIR& ir) {
+  return wasm::WasmPrinter::printStackIR(&ir, o);
+}
+
+} // namespace std
 
 #endif // wasm_wasm_printing_h

@@ -19,93 +19,49 @@
 // emscripten output.
 //
 
-#include <wasm.h>
-#include <pass.h>
-#include <wasm-builder.h>
-#include <ast/localize.h>
 #include <asmjs/shared-constants.h>
+#include <ir/import-utils.h>
+#include <ir/localize.h>
+#include <ir/memory-utils.h>
+#include <ir/module-utils.h>
+#include <ir/table-utils.h>
+#include <pass.h>
+#include <shared-constants.h>
+#include <wasm-builder.h>
+#include <wasm.h>
 
 namespace wasm {
 
-struct PostEmscripten : public WalkerPass<PostWalker<PostEmscripten>> {
+namespace {
+
+static bool isInvoke(Name name) { return name.startsWith("invoke_"); }
+
+struct OptimizeCalls : public WalkerPass<PostWalker<OptimizeCalls>> {
   bool isFunctionParallel() override { return true; }
 
-  Pass* create() override { return new PostEmscripten; }
+  Pass* create() override { return new OptimizeCalls; }
 
-  // When we have a Load from a local value (typically a GetLocal) plus a constant offset,
-  // we may be able to fold it in.
-  // The semantics of the Add are to wrap, while wasm offset semantics purposefully do
-  // not wrap. So this is not always safe to do. For example, a load may depend on
-  // wrapping via
-  //      (2^32 - 10) + 100   =>  wrap and load from address 90
-  // Without wrapping, we get something too large, and an error. *However*, for
-  // asm2wasm output coming from Emscripten, we allocate the lowest 1024 for mapped
-  // globals. Mapped globals are simple types (i32, float or double), always
-  // accessed directly by a single constant. Therefore if we see (..) + K where
-  // K is less then 1024, then if it wraps, it wraps into [0, 1024) which is at best
-  // a mapped global, but it can't be because they are accessed directly (at worst,
-  // it's 0 or an unused section of memory that was reserved for mapped globlas).
-  // Thus it is ok to optimize such small constants into Load offsets.
-
-  #define SAFE_MAX 1024
-
-  void optimizeMemoryAccess(Expression*& ptr, Address& offset) {
-    while (1) {
-      auto* add = ptr->dynCast<Binary>();
-      if (!add) break;
-      if (add->op != AddInt32) break;
-      auto* left = add->left->dynCast<Const>();
-      auto* right = add->right->dynCast<Const>();
-      // note: in optimized code, we shouldn't see an add of two constants, so don't worry about that much
-      // (precompute would optimize that)
-      if (left) {
-        auto value = left->value.geti32();
-        if (value >= 0 && value < SAFE_MAX) {
-          offset = offset + value;
-          ptr = add->right;
-          continue;
-        }
-      }
-      if (right) {
-        auto value = right->value.geti32();
-        if (value >= 0 && value < SAFE_MAX) {
-          offset = offset + value;
-          ptr = add->left;
-          continue;
-        }
-      }
-      break;
-    }
-    // finally ptr may be a const, but it isn't worth folding that in (we still have a const); in fact,
-    // it's better to do the opposite for gzip purposes as well as for readability.
-    auto* last = ptr->dynCast<Const>();
-    if (last) {
-      last->value = Literal(int32_t(last->value.geti32() + offset));
-      offset = 0;
-    }
-  }
-
-  void visitLoad(Load* curr) {
-    optimizeMemoryAccess(curr->ptr, curr->offset);
-  }
-  void visitStore(Store* curr) {
-    optimizeMemoryAccess(curr->ptr, curr->offset);
-  }
-
-  void visitCallImport(CallImport* curr) {
+  void visitCall(Call* curr) {
     // special asm.js imports can be optimized
-    auto* import = getModule()->getImport(curr->target);
-    if (import->module == GLOBAL_MATH) {
-      if (import->base == POW) {
+    auto* func = getModule()->getFunction(curr->target);
+    if (!func->imported()) {
+      return;
+    }
+    if (func->module == GLOBAL_MATH) {
+      if (func->base == POW) {
         if (auto* exponent = curr->operands[1]->dynCast<Const>()) {
           if (exponent->value == Literal(double(2.0))) {
             // This is just a square operation, do a multiply
             Localizer localizer(curr->operands[0], getFunction(), getModule());
             Builder builder(*getModule());
-            replaceCurrent(builder.makeBinary(MulFloat64, localizer.expr, builder.makeGetLocal(localizer.index, localizer.expr->type)));
+            replaceCurrent(builder.makeBinary(
+              MulFloat64,
+              localizer.expr,
+              builder.makeLocalGet(localizer.index, localizer.expr->type)));
           } else if (exponent->value == Literal(double(0.5))) {
             // This is just a square root operation
-            replaceCurrent(Builder(*getModule()).makeUnary(SqrtFloat64, curr->operands[0]));
+            replaceCurrent(
+              Builder(*getModule()).makeUnary(SqrtFloat64, curr->operands[0]));
           }
         }
       }
@@ -113,8 +69,127 @@ struct PostEmscripten : public WalkerPass<PostWalker<PostEmscripten>> {
   }
 };
 
-Pass *createPostEmscriptenPass() {
-  return new PostEmscripten();
-}
+} // namespace
+
+struct PostEmscripten : public Pass {
+  void run(PassRunner* runner, Module* module) override {
+    // Apply the sbrk ptr, if it was provided.
+    auto sbrkPtrStr =
+      runner->options.getArgumentOrDefault("emscripten-sbrk-ptr", "");
+    if (sbrkPtrStr != "") {
+      auto sbrkPtr = std::stoi(sbrkPtrStr);
+      ImportInfo imports(*module);
+      auto* func = imports.getImportedFunction(ENV, "emscripten_get_sbrk_ptr");
+      if (func) {
+        Builder builder(*module);
+        func->body = builder.makeConst(Literal(int32_t(sbrkPtr)));
+        func->module = func->base = Name();
+      }
+      // Apply the sbrk ptr value, if it was provided. This lets emscripten set
+      // up sbrk entirely in wasm, without depending on the JS side to init
+      // anything; this is necessary for standalone wasm mode, in which we do
+      // not have any JS. Otherwise, the JS would set this value during
+      // startup.
+      auto sbrkValStr =
+        runner->options.getArgumentOrDefault("emscripten-sbrk-val", "");
+      if (sbrkValStr != "") {
+        uint32_t sbrkVal = std::stoi(sbrkValStr);
+        auto end = sbrkPtr + sizeof(sbrkVal);
+        // Flatten memory to make it simple to write to. Later passes can
+        // re-optimize it.
+        MemoryUtils::ensureExists(module->memory);
+        if (!MemoryUtils::flatten(module->memory, end, module)) {
+          Fatal() << "cannot apply sbrk-val since memory is not flattenable\n";
+        }
+        auto& segment = module->memory.segments[0];
+        assert(segment.offset->cast<Const>()->value.geti32() == 0);
+        assert(end <= segment.data.size());
+        memcpy(segment.data.data() + sbrkPtr, &sbrkVal, sizeof(sbrkVal));
+      }
+    }
+
+    // Optimize calls
+    OptimizeCalls().run(runner, module);
+
+    // Optimize exceptions
+    optimizeExceptions(runner, module);
+  }
+
+  // Optimize exceptions (and setjmp) by removing unnecessary invoke* calls.
+  // An invoke is a call to JS with a function pointer; JS does a try-catch
+  // and calls the pointer, catching and reporting any error. If we know no
+  // exception will be thrown, we can simply skip the invoke.
+  void optimizeExceptions(PassRunner* runner, Module* module) {
+    // First, check if this code even uses invokes.
+    bool hasInvokes = false;
+    for (auto& imp : module->functions) {
+      if (imp->imported() && imp->module == ENV && isInvoke(imp->base)) {
+        hasInvokes = true;
+      }
+    }
+    if (!hasInvokes) {
+      return;
+    }
+    // Next, see if the Table is flat, which we need in order to see where
+    // invokes go statically. (In dynamic linking, the table is not flat,
+    // and we can't do this.)
+    FlatTable flatTable(module->table);
+    if (!flatTable.valid) {
+      return;
+    }
+    // This code has exceptions. Find functions that definitely cannot throw,
+    // and remove invokes to them.
+    struct Info
+      : public ModuleUtils::CallGraphPropertyAnalysis<Info>::FunctionInfo {
+      bool canThrow = false;
+    };
+    ModuleUtils::CallGraphPropertyAnalysis<Info> analyzer(
+      *module, [&](Function* func, Info& info) {
+        if (func->imported()) {
+          // Assume any import can throw. We may want to reduce this to just
+          // longjmp/cxa_throw/etc.
+          info.canThrow = true;
+        }
+      });
+
+    analyzer.propagateBack([](const Info& info) { return info.canThrow; },
+                           [](const Info& info) { return true; },
+                           [](Info& info) { info.canThrow = true; });
+
+    // Apply the information.
+    struct OptimizeInvokes : public WalkerPass<PostWalker<OptimizeInvokes>> {
+      bool isFunctionParallel() override { return true; }
+
+      Pass* create() override { return new OptimizeInvokes(map, flatTable); }
+
+      std::map<Function*, Info>& map;
+      FlatTable& flatTable;
+
+      OptimizeInvokes(std::map<Function*, Info>& map, FlatTable& flatTable)
+        : map(map), flatTable(flatTable) {}
+
+      void visitCall(Call* curr) {
+        if (isInvoke(curr->target)) {
+          // The first operand is the function pointer index, which must be
+          // constant if we are to optimize it statically.
+          if (auto* index = curr->operands[0]->dynCast<Const>()) {
+            auto actualTarget = flatTable.names.at(index->value.geti32());
+            if (!map[getModule()->getFunction(actualTarget)].canThrow) {
+              // This invoke cannot throw! Make it a direct call.
+              curr->target = actualTarget;
+              for (Index i = 0; i < curr->operands.size() - 1; i++) {
+                curr->operands[i] = curr->operands[i + 1];
+              }
+              curr->operands.resize(curr->operands.size() - 1);
+            }
+          }
+        }
+      }
+    };
+    OptimizeInvokes(analyzer.map, flatTable).run(runner, module);
+  }
+};
+
+Pass* createPostEmscriptenPass() { return new PostEmscripten(); }
 
 } // namespace wasm

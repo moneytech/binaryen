@@ -18,35 +18,50 @@
 // with (mostly) just the code you want to debug (function-parallel,
 // non-lto) passes on.
 
-#include "wasm.h"
 #include "pass.h"
+#include "wasm.h"
 
 namespace wasm {
 
-
 struct ExtractFunction : public Pass {
   void run(PassRunner* runner, Module* module) override {
-    auto* leave = getenv("BYN_LEAVE");
-    if (!leave) {
-      std::cerr << "usage: set BYN_LEAVE in the env\n";
+    Name name = runner->options.getArgument(
+      "extract",
+      "ExtractFunction usage:  wasm-opt --pass-arg=extract@FUNCTION_NAME");
+    std::cerr << "extracting " << name << "\n";
+    bool found = false;
+    for (auto& func : module->functions) {
+      if (func->name != name) {
+        // Turn it into an import.
+        func->module = "env";
+        func->base = func->name;
+        func->vars.clear();
+        func->body = nullptr;
+      } else {
+        found = true;
+      }
+    }
+    if (!found) {
+      std::cerr << "could not find the function to extract\n";
       abort();
     }
-    Name LEAVE(leave);
-    std::cerr << "keeping " << LEAVE << "\n";
-    for (auto& func : module->functions) {
-      if (func->name != LEAVE) {
-        // wipe out the body
-        func->body = module->allocator.alloc<Unreachable>();
-      }
+    // clear data
+    module->memory.segments.clear();
+    module->table.segments.clear();
+    // leave just an export for the thing we want
+    if (!module->getExportOrNull(name)) {
+      module->exports.clear();
+      auto* export_ = new Export;
+      export_->name = name;
+      export_->value = name;
+      export_->kind = ExternalKind::Function;
+      module->addExport(export_);
     }
   }
 };
 
 // declare pass
 
-Pass *createExtractFunctionPass() {
-  return new ExtractFunction();
-}
+Pass* createExtractFunctionPass() { return new ExtractFunction(); }
 
 } // namespace wasm
-

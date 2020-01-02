@@ -1,158 +1,10 @@
 (module
-  (memory 256 256)
   (type $0 (func (param i32)))
   (import "global.Math" "pow" (func $Math_pow (param f64 f64) (result f64)))
-  (func $b0 (type $0) (param $x i32)
-    (drop
-      (i32.load
-        (i32.add
-          (get_local $x)
-          (i32.const 1)
-        )
-      )
-    )
-    (drop
-      (i32.load
-        (i32.add
-          (get_local $x)
-          (i32.const 8)
-        )
-      )
-    )
-    (drop
-      (i32.load
-        (i32.add
-          (get_local $x)
-          (i32.const 1023)
-        )
-      )
-    )
-    (drop
-      (i32.load
-        (i32.add
-          (get_local $x)
-          (i32.const 1024)
-        )
-      )
-    )
-    (drop
-      (i32.load
-        (i32.add
-          (get_local $x)
-          (i32.const 2048)
-        )
-      )
-    )
-    (drop
-      (i32.load
-        (i32.add
-          (i32.const 4)
-          (get_local $x)
-        )
-      )
-    )
-  )
-  (func $load-off-2 "load-off-2" (param $0 i32) (result i32)
-    (i32.store offset=2
-      (i32.add
-        (i32.const 1)
-        (i32.const 3)
-      )
-      (get_local $0)
-    )
-    (i32.store offset=2
-      (i32.add
-        (i32.const 3)
-        (i32.const 1)
-      )
-      (get_local $0)
-    )
-    (i32.store offset=2
-      (i32.add
-        (get_local $0)
-        (i32.const 5)
-      )
-      (get_local $0)
-    )
-    (i32.store offset=2
-      (i32.add
-        (i32.const 7)
-        (get_local $0)
-      )
-      (get_local $0)
-    )
-    (i32.store offset=2
-      (i32.add
-        (i32.const -11) ;; do not fold this!
-        (get_local $0)
-      )
-      (get_local $0)
-    )
-    (i32.store offset=2
-      (i32.add
-        (get_local $0)
-        (i32.const -13) ;; do not fold this!
-      )
-      (get_local $0)
-    )
-    (i32.store offset=2
-      (i32.add
-        (i32.const -15)
-        (i32.const 17)
-      )
-      (get_local $0)
-    )
-    (i32.store offset=2
-      (i32.add
-        (i32.const -21)
-        (i32.const 19)
-      )
-      (get_local $0)
-    )
-    (i32.store offset=2
-      (i32.const 23)
-      (get_local $0)
-    )
-    (i32.store offset=2
-      (i32.const -25)
-      (get_local $0)
-    )
-    (drop
-      (i32.load offset=2
-        (i32.add
-          (i32.const 2)
-          (i32.const 4)
-        )
-      )
-    )
-    (drop
-      (i32.load offset=2
-        (i32.add
-          (i32.const 4)
-          (i32.const 2)
-        )
-      )
-    )
-    (drop
-      (i32.load offset=2
-        (i32.add
-          (get_local $0)
-          (i32.const 6)
-        )
-      )
-    )
-    (drop
-      (i32.load offset=2
-        (i32.const 8)
-      )
-    )
-    (i32.load offset=2
-      (i32.add
-        (i32.const 10)
-        (get_local $0)
-      )
-    )
-  )
+  (import "env" "invoke_vif" (func $invoke_vif (param i32 i32 f32)))
+  (memory 256 256)
+  (table 7 7 funcref)
+  (elem (i32.const 0) $pow2 $pow.2 $exc $other_safe $other_unsafe $deep_safe $deep_unsafe)
   (func $pow2
     (local $x f64)
     (local $y f64)
@@ -174,16 +26,16 @@
         (f64.const 1)
       )
     )
-    (set_local $x (f64.const 5))
+    (local.set $x (f64.const 5))
     (drop
       (call $Math_pow
-        (get_local $x)
+        (local.get $x)
         (f64.const 2)
       )
     )
     (drop
       (call $Math_pow
-        (tee_local $y (f64.const 7))
+        (local.tee $y (f64.const 7))
         (f64.const 2)
       )
     )
@@ -207,5 +59,71 @@
         (f64.const 0.51)
       )
     )
+  )
+  (func $exc
+    (call $invoke_vif
+      (i32.const 3) ;; other_safe()
+      (i32.const 42)
+      (f32.const 3.14159)
+    )
+    (call $invoke_vif
+      (i32.const 4) ;; other_unsafe()
+      (i32.const 55)
+      (f32.const 2.18281828)
+    )
+    (call $invoke_vif
+      (i32.const 5) ;; deep_safe()
+      (i32.const 100)
+      (f32.const 1.111)
+    )
+    (call $invoke_vif
+      (i32.const 6) ;; deep_unsafe()
+      (i32.const 999)
+      (f32.const 1.414)
+    )
+    (call $invoke_vif
+      (i32.add (i32.const 1) (i32.const 1)) ;; nonconstant
+      (i32.const 42)
+      (f32.const 3.14159)
+    )
+  )
+  (func $other_safe (param i32) (param f32)
+  )
+  (func $other_unsafe (param i32) (param f32)
+    (drop
+      (call $Math_pow
+        (f64.const 1)
+        (f64.const 3)
+      )
+    )
+  )
+  (func $deep_safe (param i32) (param f32)
+    (call $other_safe (unreachable) (unreachable))
+  )
+  (func $deep_unsafe (param i32) (param f32)
+    (call $other_unsafe (unreachable) (unreachable))
+  )
+)
+(module ;; no invokes
+  (func $call
+    (call $call)
+  )
+)
+(module
+  (type $0 (func (param i32)))
+  (import "global.Math" "pow" (func $Math_pow (param f64 f64) (result f64)))
+  (import "env" "invoke_vif" (func $invoke_vif (param i32 i32 f32)))
+  (import "env" "glob" (global $glob i32)) ;; non-constant table offset
+  (memory 256 256)
+  (table 7 7 funcref)
+  (elem (global.get $glob) $other_safe)
+  (func $exc
+    (call $invoke_vif
+      (i32.const 3) ;; other_safe()
+      (i32.const 42)
+      (f32.const 3.14159)
+    )
+  )
+  (func $other_safe (param i32) (param f32)
   )
 )

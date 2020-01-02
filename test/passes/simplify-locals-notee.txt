@@ -1,26 +1,25 @@
 (module
- (type $0 (func))
- (memory $0 0)
- (func $contrast (type $0)
+ (type $none_=>_none (func))
+ (func $contrast (; 0 ;)
   (local $x i32)
   (local $y i32)
   (local $z i32)
   (local $a i32)
   (local $b i32)
-  (set_local $x
+  (local.set $x
    (i32.const 1)
   )
   (if
-   (get_local $x)
+   (local.get $x)
    (nop)
   )
   (if
-   (get_local $x)
+   (local.get $x)
    (nop)
   )
   (nop)
   (drop
-   (if i32
+   (if (result i32)
     (i32.const 2)
     (i32.const 3)
     (i32.const 4)
@@ -28,19 +27,19 @@
   )
   (nop)
   (drop
-   (block $block i32
+   (block $block (result i32)
     (i32.const 5)
    )
   )
   (nop)
   (drop
-   (if i32
+   (if (result i32)
     (i32.const 6)
-    (block i32
+    (block (result i32)
      (nop)
      (i32.const 7)
     )
-    (block i32
+    (block (result i32)
      (nop)
      (i32.const 8)
     )
@@ -48,7 +47,7 @@
   )
   (nop)
   (drop
-   (block $val i32
+   (block $val (result i32)
     (if
      (i32.const 10)
      (block $block4

@@ -17,28 +17,75 @@
 #ifndef wasm_wasm_emscripten_h
 #define wasm_wasm_emscripten_h
 
+#include "support/file.h"
+#include "wasm-builder.h"
 #include "wasm.h"
 
 namespace wasm {
 
-class LinkerObject;
+// Class which modifies a wasm module for use with emscripten. Generates
+// runtime functions and emits metadata.
+class EmscriptenGlueGenerator {
+public:
+  EmscriptenGlueGenerator(Module& wasm, Address stackPointerOffset = Address(0))
+    : wasm(wasm), builder(wasm), stackPointerOffset(stackPointerOffset),
+      useStackPointerGlobal(stackPointerOffset == 0) {}
 
-namespace emscripten {
+  void setStandalone(bool standalone_) { standalone = standalone_; }
 
-void generateRuntimeFunctions(LinkerObject& linker);
-void generateMemoryGrowthFunction(Module&);
+  void generateRuntimeFunctions();
+  Function* generateMemoryGrowthFunction();
+  Function* generateAssignGOTEntriesFunction();
+  void generatePostInstantiateFunction();
 
-// Create thunks for use with emscripten Runtime.dynCall. Creates one for each
-// signature in the indirect function table.
-std::vector<Function*> makeDynCallThunks(Module& wasm, std::vector<Name> const& tableSegmentData);
+  // Create thunks for use with emscripten Runtime.dynCall. Creates one for each
+  // signature in the indirect function table.
+  void generateDynCallThunks();
 
-void generateEmscriptenMetadata(std::ostream& o,
-                                Module& wasm,
-                                std::unordered_map<Address, Address> segmentsByAddress,
-                                Address staticBump,
-                                std::vector<Name> const& initializerFunctions);
+  // Convert stack pointer access from global.get/global.set to calling save
+  // and restore functions.
+  void replaceStackPointerGlobal();
 
-} // namespace emscripten
+  // Remove the import of a mutable __stack_pointer and instead initialize the
+  // stack pointer from an immutable import.
+  void internalizeStackPointerGlobal();
+
+  std::string
+  generateEmscriptenMetadata(Address staticBump,
+                             std::vector<Name> const& initializerFunctions);
+
+  void fixInvokeFunctionNames();
+
+  void enforceStackLimit();
+
+  void exportWasiStart();
+
+  // Emits the data segments to a file. The file contains data from address base
+  // onwards (we must pass in base, as we can't tell it from the wasm - the
+  // first segment may start after a run of zeros, but we need those zeros in
+  // the file).
+  void separateDataSegments(Output* outfile, Address base);
+
+private:
+  Module& wasm;
+  Builder builder;
+  Address stackPointerOffset;
+  bool useStackPointerGlobal;
+  bool standalone;
+  // Used by generateDynCallThunk to track all the dynCall functions created
+  // so far.
+  std::unordered_set<Signature> sigs;
+
+  Global* getStackPointerGlobal();
+  Expression* generateLoadStackPointer();
+  Expression* generateStoreStackPointer(Function* func, Expression* value);
+  void generateDynCallThunk(Signature sig);
+  void generateStackSaveFunction();
+  void generateStackAllocFunction();
+  void generateStackRestoreFunction();
+  void generateSetStackLimitFunction();
+  Name importStackOverflowHandler();
+};
 
 } // namespace wasm
 

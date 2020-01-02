@@ -1,10 +1,12 @@
 // beginning a Binaryen API trace
+
+#include <cassert>
 #include <stdio.h>
 #include <math.h>
 #include <map>
 #include "binaryen-c.h"
+
 int main() {
-  std::map<size_t, BinaryenFunctionTypeRef> functionTypes;
   std::map<size_t, BinaryenExpressionRef> expressions;
   std::map<size_t, BinaryenFunctionRef> functions;
   std::map<size_t, RelooperBlockRef> relooperBlocks;
@@ -15,72 +17,83 @@ int main() {
   BinaryenModuleAutoDrop(the_module);
   {
     const char* segments[] = { 0 };
+    int8_t segmentPassive[] = { 0 };
     BinaryenExpressionRef segmentOffsets[] = { 0 };
     BinaryenIndex segmentSizes[] = { 0 };
-    BinaryenSetMemory(the_module, 256, 256, "memory", segments, segmentOffsets, segmentSizes, 0);
+    BinaryenSetMemory(the_module, 256, 256, "memory", segments, segmentPassive, segmentOffsets, segmentSizes, 0, 0);
   }
-  the_relooper = RelooperCreate();
+  the_relooper = RelooperCreate(the_module);
   {
     BinaryenExpressionRef children[] = { 0 };
-    expressions[1] = BinaryenBlock(the_module, "bb0", children, 0, BinaryenUndefined());
+    expressions[1] = BinaryenBlock(the_module, "bb0", children, 0, BinaryenTypeAuto());
   }
   relooperBlocks[0] = RelooperAddBlock(the_relooper, expressions[1]);
-  expressions[2] = BinaryenGetLocal(the_module, 0, 1);
+  expressions[2] = BinaryenLocalGet(the_module, 0, BinaryenTypeInt32());
   expressions[3] = BinaryenConst(the_module, BinaryenLiteralInt32(0));
-  expressions[4] = BinaryenStore(the_module, 4, 0, 0, expressions[3], expressions[2], 1);
+  expressions[4] = BinaryenStore(
+    the_module, 4, 0, 0, expressions[3], expressions[2], BinaryenTypeInt32());
   expressions[5] = BinaryenReturn(the_module, expressions[0]);
   {
     BinaryenExpressionRef children[] = { expressions[4], expressions[5] };
-    expressions[6] = BinaryenBlock(the_module, "bb1", children, 2, BinaryenUndefined());
+    expressions[6] = BinaryenBlock(the_module, "bb1", children, 2, BinaryenTypeAuto());
   }
   relooperBlocks[1] = RelooperAddBlock(the_relooper, expressions[6]);
   RelooperAddBranch(relooperBlocks[0], relooperBlocks[1], expressions[0], expressions[0]);
-  {
-    BinaryenType paramTypes[] = { 0 };
-    functionTypes[0] = BinaryenAddFunctionType(the_module, "rustfn-0-3", 0, paramTypes, 0);
-  }
   expressions[7] = BinaryenConst(the_module, BinaryenLiteralInt32(0));
-  expressions[8] = BinaryenLoad(the_module, 4, 0, 0, 0, 1, expressions[7]);
-  expressions[9] = BinaryenSetLocal(the_module, 0, expressions[8]);
+  expressions[8] =
+    BinaryenLoad(the_module, 4, 0, 0, 0, BinaryenTypeInt32(), expressions[7]);
+  expressions[9] = BinaryenLocalSet(the_module, 0, expressions[8]);
   relooperBlocks[2] = RelooperAddBlock(the_relooper, expressions[9]);
   RelooperAddBranch(relooperBlocks[2], relooperBlocks[0], expressions[0], expressions[0]);
-  expressions[10] = RelooperRenderAndDispose(the_relooper, relooperBlocks[2], 1, the_module);
+  expressions[10] = RelooperRenderAndDispose(the_relooper, relooperBlocks[2], 1);
   {
-    BinaryenType varTypes[] = { 1, 1, 2 };
-    functions[0] = BinaryenAddFunction(the_module, "main", functionTypes[0], varTypes, 3, expressions[10]);
+    BinaryenType varTypes[] = {
+      BinaryenTypeInt32(), BinaryenTypeInt32(), BinaryenTypeInt64()};
+    functions[0] = BinaryenAddFunction(the_module,
+                                       "main",
+                                       BinaryenTypeNone(),
+                                       BinaryenTypeNone(),
+                                       varTypes,
+                                       3,
+                                       expressions[10]);
   }
-  BinaryenAddExport(the_module, "main", "main");
-  {
-    BinaryenType paramTypes[] = { 0 };
-    functionTypes[1] = BinaryenAddFunctionType(the_module, "__wasm_start", 0, paramTypes, 0);
-  }
+  BinaryenAddFunctionExport(the_module, "main", "main");
   {
     const char* segments[] = { 0 };
+    int8_t segmentPassive[] = { 0 };
     BinaryenExpressionRef segmentOffsets[] = { 0 };
     BinaryenIndex segmentSizes[] = { 0 };
-    BinaryenSetMemory(the_module, 1024, 1024, NULL, segments, segmentOffsets, segmentSizes, 0);
+    BinaryenSetMemory(the_module, 1024, 1024, NULL, segments, segmentPassive, segmentOffsets, segmentSizes, 0, 0);
   }
   expressions[11] = BinaryenConst(the_module, BinaryenLiteralInt32(65535));
   expressions[12] = BinaryenConst(the_module, BinaryenLiteralInt32(0));
-  expressions[13] = BinaryenStore(the_module, 4, 0, 0, expressions[12], expressions[11], 1);
+  expressions[13] = BinaryenStore(
+    the_module, 4, 0, 0, expressions[12], expressions[11], BinaryenTypeInt32());
   {
     BinaryenExpressionRef operands[] = { 0 };
-    expressions[14] = BinaryenCall(the_module, "main", operands, 0, 0);
+    expressions[14] = BinaryenCall(the_module, "main", operands, 0, BinaryenTypeNone());
   }
   {
     BinaryenExpressionRef children[] = { expressions[13], expressions[14] };
-    expressions[15] = BinaryenBlock(the_module, NULL, children, 2, BinaryenUndefined());
+    expressions[15] = BinaryenBlock(the_module, NULL, children, 2, BinaryenTypeAuto());
   }
-  BinaryenAddExport(the_module, "__wasm_start", "rust_entry");
+  BinaryenAddFunctionExport(the_module, "__wasm_start", "rust_entry");
   {
-    BinaryenType varTypes[] = { 0 };
-    functions[1] = BinaryenAddFunction(the_module, "__wasm_start", functionTypes[1], varTypes, 0, expressions[15]);
+    BinaryenType varTypes[] = {BinaryenTypeNone()};
+    functions[1] = BinaryenAddFunction(the_module,
+                                       "__wasm_start",
+                                       BinaryenTypeNone(),
+                                       BinaryenTypeNone(),
+                                       varTypes,
+                                       0,
+                                       expressions[15]);
   }
-  BinaryenModuleValidate(the_module);
+  assert(BinaryenModuleValidate(the_module));
   BinaryenModulePrint(the_module);
   // check that binary read-write works
   {
     char buffer[1024];
+    BinaryenSetDebugInfo(1);
     size_t size = BinaryenModuleWrite(the_module, buffer, 1024);
     printf("%d\n", size);
     BinaryenModuleRef copy = BinaryenModuleRead(buffer, size);
@@ -90,4 +103,3 @@ int main() {
   BinaryenModuleDispose(the_module);
   return 0;
 }
-

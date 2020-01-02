@@ -1,5 +1,5 @@
-#!/usr/bin/env python2
-
+#!/usr/bin/env python3
+#
 # Copyright 2015 WebAssembly Community Group participants
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,686 +14,468 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
+import glob
 import os
 import shutil
 import subprocess
 import sys
+import unittest
+from collections import OrderedDict
 
-from scripts.test.support import run_command, split_wast
-from scripts.test.shared import (
-    ASM2WASM, BIN_DIR, EMCC, MOZJS, NATIVECC, NATIVEXX, NODEJS, S2WASM_EXE,
-    WASM_AS, WASM_OPT, WASM_SHELL, WASM_MERGE, WASM_SHELL_EXE, WASM_DIS,
-    binary_format_check, delete_from_orbit, fail, fail_with_error,
-    fail_if_not_identical, fail_if_not_contained, has_vanilla_emcc,
-    has_vanilla_llvm, minify_check, num_failures, options, tests,
-    requested, warnings
-)
+from scripts.test import asm2wasm
+from scripts.test import binaryenjs
+from scripts.test import lld
+from scripts.test import shared
+from scripts.test import support
+from scripts.test import wasm2js
 
-import scripts.test.s2wasm as s2wasm
 
-if options.interpreter:
-  print '[ using wasm interpreter at "%s" ]' % options.interpreter
-  assert os.path.exists(options.interpreter), 'interpreter not found'
+if shared.options.interpreter:
+    print('[ using wasm interpreter at "%s" ]' % shared.options.interpreter)
+    assert os.path.exists(shared.options.interpreter), 'interpreter not found'
 
-# tests
 
-print '[ checking --help is useful... ]\n'
+def run_help_tests():
+    print('[ checking --help is useful... ]\n')
 
-not_executable_suffix = ['.txt', '.js', '.ilk', '.pdb', '.dll']
-executables = sorted(filter(lambda x: not any(x.endswith(s) for s in
-                                              not_executable_suffix) and os.path.isfile(x),
-                            os.listdir(options.binaryen_bin)))
-for e in executables:
-  print '.. %s --help' % e
-  out, err = subprocess.Popen([os.path.join(options.binaryen_bin, e), '--help'],
-                              stdout=subprocess.PIPE,
-                              stderr=subprocess.PIPE).communicate()
-  assert len(out) == 0, 'Expected no stdout, got:\n%s' % out
-  assert e.replace('.exe', '') in err, 'Expected help to contain program name, got:\n%s' % err
-  assert len(err.split('\n')) > 8, 'Expected some help, got:\n%s' % err
+    not_executable_suffix = ['.txt', '.js', '.ilk', '.pdb', '.dll', '.wasm', '.manifest']
+    bin_files = [os.path.join(shared.options.binaryen_bin, f) for f in os.listdir(shared.options.binaryen_bin)]
+    executables = [f for f in bin_files if os.path.isfile(f) and not any(f.endswith(s) for s in not_executable_suffix)]
+    executables = sorted(executables)
+    assert len(executables)
 
-print '\n[ checking wasm-opt -o notation... ]\n'
+    for e in executables:
+        print('.. %s --help' % e)
+        out, err = subprocess.Popen([e, '--help'],
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE).communicate()
+        out = out.decode('utf-8')
+        err = err.decode('utf-8')
+        assert len(err) == 0, 'Expected no stderr, got:\n%s' % err
+        assert os.path.basename(e).replace('.exe', '') in out, 'Expected help to contain program name, got:\n%s' % out
+        assert len(out.split('\n')) > 8, 'Expected some help, got:\n%s' % out
 
-wast = os.path.join(options.binaryen_test, 'hello_world.wast')
-delete_from_orbit('a.wast')
-cmd = WASM_OPT + [wast, '-o', 'a.wast', '-S']
-run_command(cmd)
-fail_if_not_identical(open('a.wast').read(), open(wast).read())
+    print('[ checking --version ... ]\n')
+    for e in executables:
+        print('.. %s --version' % e)
+        out, err = subprocess.Popen([e, '--version'],
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE).communicate()
+        out = out.decode('utf-8')
+        err = err.decode('utf-8')
+        assert len(err) == 0, 'Expected no stderr, got:\n%s' % err
+        assert os.path.basename(e).replace('.exe', '') in out, 'Expected version to contain program name, got:\n%s' % out
+        assert len(out.strip().splitlines()) == 1, 'Expected only version info, got:\n%s' % out
 
-print '\n[ checking wasm-opt binary reading/writing... ]\n'
 
-shutil.copyfile(os.path.join(options.binaryen_test, 'hello_world.wast'), 'a.wast')
-delete_from_orbit('a.wasm')
-delete_from_orbit('b.wast')
-run_command(WASM_OPT + ['a.wast', '-o', 'a.wasm'])
-assert open('a.wasm', 'rb').read()[0] == '\0', 'we emit binary by default'
-run_command(WASM_OPT + ['a.wasm', '-o', 'b.wast', '-S'])
-assert open('b.wast', 'rb').read()[0] != '\0', 'we emit text with -S'
+def run_wasm_opt_tests():
+    print('\n[ checking wasm-opt -o notation... ]\n')
 
-print '\n[ checking wasm-opt passes... ]\n'
+    for extra_args in [[], ['--no-validation']]:
+        wast = os.path.join(shared.options.binaryen_test, 'hello_world.wat')
+        shared.delete_from_orbit('a.wat')
+        out = 'a.wat'
+        cmd = shared.WASM_OPT + [wast, '-o', out, '-S'] + extra_args
+        support.run_command(cmd)
+        shared.fail_if_not_identical_to_file(open(out).read(), wast)
 
-for t in sorted(os.listdir(os.path.join(options.binaryen_test, 'passes'))):
-  if t.endswith(('.wast', '.wasm')):
-    print '..', t
-    binary = '.wasm' in t
-    passname = os.path.basename(t).replace('.wast', '').replace('.wasm', '')
-    opts = ['-' + passname] if passname.startswith('O') else ['--' + p for p in passname.split('_')]
-    t = os.path.join(options.binaryen_test, 'passes', t)
-    actual = ''
-    for module, asserts in split_wast(t):
-      assert len(asserts) == 0
-      with open('split.wast', 'w') as o: o.write(module)
-      cmd = WASM_OPT + opts + ['split.wast', '--print']
-      curr = run_command(cmd)
-      actual += curr
-      # also check debug mode output is valid
-      debugged = run_command(cmd + ['--debug'], stderr=subprocess.PIPE)
-      fail_if_not_contained(actual, debugged)
-      # also check pass-debug mode
-      old_pass_debug = os.environ.get('BINARYEN_PASS_DEBUG')
-      try:
-        os.environ['BINARYEN_PASS_DEBUG'] = '1'
-        pass_debug = run_command(cmd)
-        fail_if_not_identical(curr, pass_debug)
-      finally:
-        if old_pass_debug is not None:
-          os.environ['BINARYEN_PASS_DEBUG'] = old_pass_debug
-        else:
-          if 'BINARYEN_PASS_DEBUG' in os.environ:
-            del os.environ['BINARYEN_PASS_DEBUG']
+    print('\n[ checking wasm-opt binary reading/writing... ]\n')
 
-    fail_if_not_identical(actual, open(os.path.join('test', 'passes', passname + ('.bin' if binary else '') + '.txt'), 'rb').read())
+    shutil.copyfile(os.path.join(shared.options.binaryen_test, 'hello_world.wat'), 'a.wat')
+    shared.delete_from_orbit('a.wasm')
+    shared.delete_from_orbit('b.wast')
+    support.run_command(shared.WASM_OPT + ['a.wat', '-o', 'a.wasm'])
+    assert open('a.wasm', 'rb').read()[0] == 0, 'we emit binary by default'
+    support.run_command(shared.WASM_OPT + ['a.wasm', '-o', 'b.wast', '-S'])
+    assert open('b.wast', 'rb').read()[0] != 0, 'we emit text with -S'
 
-print '[ checking asm2wasm testcases... ]\n'
+    print('\n[ checking wasm-opt passes... ]\n')
 
-for asm in tests:
-  if asm.endswith('.asm.js'):
-    for precise in [0, 1, 2]:
-      for opts in [1, 0]:
-        cmd = ASM2WASM + [os.path.join(options.binaryen_test, asm)]
-        wasm = asm.replace('.asm.js', '.fromasm')
-        if not precise:
-          cmd += ['--emit-potential-traps', '--ignore-implicit-traps']
-          wasm += '.imprecise'
-        elif precise == 2:
-          cmd += ['--emit-clamped-potential-traps']
-          wasm += '.clamp'
-        if not opts:
-          wasm += '.no-opts'
-          if precise:
-            cmd += ['-O0'] # test that -O0 does nothing
-        else:
-          cmd += ['-O']
-        if 'debugInfo' in asm:
-          cmd += ['-g']
-        if 'noffi' in asm:
-          cmd += ['--no-legalize-javascript-ffi']
-        if precise and opts:
-          # test mem init importing
-          open('a.mem', 'wb').write(asm)
-          cmd += ['--mem-init=a.mem']
-          if asm[0] == 'e':
-            cmd += ['--mem-base=1024']
-        if 'i64' in asm or 'wasm-only' in asm or 'noffi' in asm:
-          cmd += ['--wasm-only']
-        wasm = os.path.join(options.binaryen_test, wasm)
-        print '..', asm, wasm
+    for t in shared.get_tests(shared.get_test_dir('passes'), ['.wast', '.wasm']):
+        print('..', os.path.basename(t))
+        binary = '.wasm' in t
+        base = os.path.basename(t).replace('.wast', '').replace('.wasm', '')
+        passname = base
+        passes_file = os.path.join(shared.get_test_dir('passes'), passname + '.passes')
+        if os.path.exists(passes_file):
+            passname = open(passes_file).read().strip()
+        opts = [('--' + p if not p.startswith('O') and p != 'g' else '-' + p) for p in passname.split('_')]
+        actual = ''
+        for module, asserts in support.split_wast(t):
+            assert len(asserts) == 0
+            support.write_wast('split.wast', module)
+            cmd = shared.WASM_OPT + opts + ['split.wast', '--print']
+            curr = support.run_command(cmd)
+            actual += curr
+            # also check debug mode output is valid
+            debugged = support.run_command(cmd + ['--debug'], stderr=subprocess.PIPE)
+            shared.fail_if_not_contained(actual, debugged)
 
-        def do_asm2wasm_test():
-          actual = run_command(cmd)
+            # also check pass-debug mode
+            def check():
+                pass_debug = support.run_command(cmd)
+                shared.fail_if_not_identical(curr, pass_debug)
+            shared.with_pass_debug(check)
 
-          # verify output
-          if not os.path.exists(wasm):
-            fail_with_error('output .wast file %s does not exist' % wasm)
-          expected = open(wasm, 'rb').read()
-          if actual != expected:
-            fail(actual, expected)
+        expected_file = os.path.join(shared.get_test_dir('passes'), base + ('.bin' if binary else '') + '.txt')
+        shared.fail_if_not_identical_to_file(actual, expected_file)
 
-          binary_format_check(wasm, verify_final_result=False)
+        if 'emit-js-wrapper' in t:
+            with open('a.js') as actual:
+                shared.fail_if_not_identical_to_file(actual.read(), t + '.js')
+        if 'emit-spec-wrapper' in t:
+            with open('a.wat') as actual:
+                shared.fail_if_not_identical_to_file(actual.read(), t + '.wat')
 
-        # test both normally and with pass debug (so each inter-pass state is validated)
-        old_pass_debug = os.environ.get('BINARYEN_PASS_DEBUG')
+    print('\n[ checking wasm-opt parsing & printing... ]\n')
+
+    for t in shared.get_tests(shared.get_test_dir('print'), ['.wast']):
+        print('..', os.path.basename(t))
+        wasm = os.path.basename(t).replace('.wast', '')
+        cmd = shared.WASM_OPT + [t, '--print', '-all']
+        print('    ', ' '.join(cmd))
+        actual, err = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True).communicate()
+        expected_file = os.path.join(shared.get_test_dir('print'), wasm + '.txt')
+        shared.fail_if_not_identical_to_file(actual, expected_file)
+        cmd = shared.WASM_OPT + [os.path.join(shared.get_test_dir('print'), t), '--print-minified', '-all']
+        print('    ', ' '.join(cmd))
+        actual, err = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True).communicate()
+        shared.fail_if_not_identical(actual.strip(), open(os.path.join(shared.get_test_dir('print'), wasm + '.minified.txt')).read().strip())
+
+    print('\n[ checking wasm-opt testcases... ]\n')
+
+    for t in shared.get_tests(shared.options.binaryen_test, ['.wast']):
+        print('..', os.path.basename(t))
+        f = t + '.from-wast'
+        cmd = shared.WASM_OPT + [t, '--print', '-all']
+        actual = support.run_command(cmd)
+        actual = actual.replace('printing before:\n', '')
+
+        shared.fail_if_not_identical_to_file(actual, f)
+
+        # FIXME Remove this condition after nullref is implemented in V8
+        if 'reference-types.wast' not in t:
+            shared.binary_format_check(t, wasm_as_args=['-g'])  # test with debuginfo
+            shared.binary_format_check(t, wasm_as_args=[], binary_suffix='.fromBinary.noDebugInfo')  # test without debuginfo
+
+        shared.minify_check(t)
+
+    print('\n[ checking wasm-opt debugInfo read-write... ]\n')
+
+    for t in shared.get_tests(shared.options.binaryen_test, ['.fromasm']):
+        if 'debugInfo' not in t:
+            continue
+        print('..', os.path.basename(t))
+        f = t + '.read-written'
+        support.run_command(shared.WASM_AS + [t, '--source-map=a.map', '-o', 'a.wasm', '-g'])
+        support.run_command(shared.WASM_OPT + ['a.wasm', '--input-source-map=a.map', '-o', 'b.wasm', '--output-source-map=b.map', '-g'])
+        actual = support.run_command(shared.WASM_DIS + ['b.wasm', '--source-map=b.map'])
+        shared.fail_if_not_identical_to_file(actual, f)
+
+
+def run_wasm_dis_tests():
+    print('\n[ checking wasm-dis on provided binaries... ]\n')
+
+    for t in shared.get_tests(shared.options.binaryen_test, ['.wasm']):
+        print('..', os.path.basename(t))
+        cmd = shared.WASM_DIS + [t]
+        if os.path.isfile(t + '.map'):
+            cmd += ['--source-map', t + '.map']
+
+        actual = support.run_command(cmd)
+        shared.fail_if_not_identical_to_file(actual, t + '.fromBinary')
+
+        # also verify there are no validation errors
+        def check():
+            cmd = shared.WASM_OPT + [t, '-all']
+            support.run_command(cmd)
+
+        shared.with_pass_debug(check)
+
+        shared.validate_binary(t)
+
+
+def run_crash_tests():
+    print("\n[ checking we don't crash on tricky inputs... ]\n")
+
+    for t in shared.get_tests(shared.get_test_dir('crash'), ['.wast', '.wasm']):
+        print('..', os.path.basename(t))
+        cmd = shared.WASM_OPT + [t]
+        # expect a parse error to be reported
+        support.run_command(cmd, expected_err='parse exception:', err_contains=True, expected_status=1)
+
+
+def run_dylink_tests():
+    print("\n[ we emit dylink sections properly... ]\n")
+
+    dylink_tests = glob.glob(os.path.join(shared.options.binaryen_test, 'dylib*.wasm'))
+    for t in sorted(dylink_tests):
+        print('..', os.path.basename(t))
+        cmd = shared.WASM_OPT + [t, '-o', 'a.wasm']
+        support.run_command(cmd)
+        with open('a.wasm', 'rb') as output:
+            index = output.read().find(b'dylink')
+            print('  ', index)
+            assert index == 11, 'dylink section must be first, right after the magic number etc.'
+
+
+def run_ctor_eval_tests():
+    print('\n[ checking wasm-ctor-eval... ]\n')
+
+    for t in shared.get_tests(shared.get_test_dir('ctor-eval'), ['.wast', '.wasm']):
+        print('..', os.path.basename(t))
+        ctors = open(t + '.ctors').read().strip()
+        cmd = shared.WASM_CTOR_EVAL + [t, '-o', 'a.wat', '-S', '--ctors', ctors]
+        support.run_command(cmd)
+        actual = open('a.wat').read()
+        out = t + '.out'
+        shared.fail_if_not_identical_to_file(actual, out)
+
+
+def run_wasm_metadce_tests():
+    print('\n[ checking wasm-metadce ]\n')
+
+    for t in shared.get_tests(shared.get_test_dir('metadce'), ['.wast', '.wasm']):
+        print('..', os.path.basename(t))
+        graph = t + '.graph.txt'
+        cmd = shared.WASM_METADCE + [t, '--graph-file=' + graph, '-o', 'a.wat', '-S', '-all']
+        stdout = support.run_command(cmd)
+        expected = t + '.dced'
+        with open('a.wat') as seen:
+            shared.fail_if_not_identical_to_file(seen.read(), expected)
+        shared.fail_if_not_identical_to_file(stdout, expected + '.stdout')
+
+
+def run_wasm_reduce_tests():
+    if not shared.has_shell_timeout():
+        print('\n[ skipping wasm-reduce testcases]\n')
+        return
+
+    print('\n[ checking wasm-reduce testcases]\n')
+
+    # fixed testcases
+    for t in shared.get_tests(shared.get_test_dir('reduce'), ['.wast']):
+        print('..', os.path.basename(t))
+        # convert to wasm
+        support.run_command(shared.WASM_AS + [t, '-o', 'a.wasm'])
+        support.run_command(shared.WASM_REDUCE + ['a.wasm', '--command=%s b.wasm --fuzz-exec -all' % shared.WASM_OPT[0], '-t', 'b.wasm', '-w', 'c.wasm', '--timeout=4'])
+        expected = t + '.txt'
+        support.run_command(shared.WASM_DIS + ['c.wasm', '-o', 'a.wat'])
+        with open('a.wat') as seen:
+            shared.fail_if_not_identical_to_file(seen.read(), expected)
+
+    # run on a nontrivial fuzz testcase, for general coverage
+    # this is very slow in ThreadSanitizer, so avoid it there
+    if 'fsanitize=thread' not in str(os.environ):
+        print('\n[ checking wasm-reduce fuzz testcase ]\n')
+
+        support.run_command(shared.WASM_OPT + [os.path.join(shared.options.binaryen_test, 'unreachable-import_wasm-only.asm.js'), '-ttf', '-Os', '-o', 'a.wasm', '-all'])
+        before = os.stat('a.wasm').st_size
+        support.run_command(shared.WASM_REDUCE + ['a.wasm', '--command=%s b.wasm --fuzz-exec -all' % shared.WASM_OPT[0], '-t', 'b.wasm', '-w', 'c.wasm'])
+        after = os.stat('c.wasm').st_size
+        # This number is a custom threshold to check if we have shrunk the
+        # output sufficiently
+        assert after < 0.75 * before, [before, after]
+
+
+def run_spec_tests():
+    print('\n[ checking wasm-shell spec testcases... ]\n')
+
+    for wast in shared.options.spec_tests:
+        print('..', os.path.basename(wast))
+
+        def run_spec_test(wast):
+            cmd = shared.WASM_SHELL + [wast]
+            return support.run_command(cmd, stderr=subprocess.PIPE)
+
+        def run_opt_test(wast):
+            # check optimization validation
+            cmd = shared.WASM_OPT + [wast, '-O', '-all']
+            support.run_command(cmd)
+
+        def check_expected(actual, expected):
+            if expected and os.path.exists(expected):
+                expected = open(expected).read()
+                print('       (using expected output)')
+                actual = actual.strip()
+                expected = expected.strip()
+                if actual != expected:
+                    shared.fail(actual, expected)
+
+        expected = os.path.join(shared.get_test_dir('spec'), 'expected-output', os.path.basename(wast) + '.log')
+
+        # some spec tests should fail (actual process failure, not just assert_invalid)
         try:
-          os.environ['BINARYEN_PASS_DEBUG'] = '1'
-          do_asm2wasm_test()
-          del os.environ['BINARYEN_PASS_DEBUG']
-          do_asm2wasm_test()
-        finally:
-          if old_pass_debug is not None:
-            os.environ['BINARYEN_PASS_DEBUG'] = old_pass_debug
-          else:
-            if 'BINARYEN_PASS_DEBUG' in os.environ:
-              del os.environ['BINARYEN_PASS_DEBUG']
+            actual = run_spec_test(wast)
+        except Exception as e:
+            if ('wasm-validator error' in str(e) or 'parse exception' in str(e)) and '.fail.' in os.path.basename(wast):
+                print('<< test failed as expected >>')
+                continue  # don't try all the binary format stuff TODO
+            else:
+                shared.fail_with_error(str(e))
 
-        # verify in wasm
-        if options.interpreter:
-          # remove imports, spec interpreter doesn't know what to do with them
-          subprocess.check_call(WASM_OPT + ['--remove-imports', wasm], stdout=open('ztemp.wast', 'w'), stderr=subprocess.PIPE)
-          proc = subprocess.Popen([options.interpreter, 'ztemp.wast'], stderr=subprocess.PIPE)
-          out, err = proc.communicate()
-          if proc.returncode != 0:
-            try: # to parse the error
-              reported = err.split(':')[1]
-              start, end = reported.split('-')
-              start_line, start_col = map(int, start.split('.'))
-              lines = open('ztemp.wast').read().split('\n')
-              print
-              print '='*80
-              print lines[start_line-1]
-              print (' '*(start_col-1)) + '^'
-              print (' '*(start_col-2)) + '/_\\'
-              print '='*80
-              print err
-            except Exception, e:
-              fail_with_error('wasm interpreter error: ' + err) # failed to pretty-print
-            fail_with_error('wasm interpreter error')
+        check_expected(actual, expected)
 
-        # verify debug info
-        if 'debugInfo' in asm:
-          jsmap = 'a.wasm.map'
-          cmd += ['--source-map', jsmap,
-                  '--source-map-url', 'http://example.org/' + jsmap,
-                  '-o', 'a.wasm']
-          run_command(cmd)
-          if not os.path.isfile(jsmap):
-            fail_with_error('Debug info map not created: %s' % jsmap)
-          with open(wasm + '.map', 'rb') as expected:
-            with open(jsmap, 'rb') as actual:
-              fail_if_not_identical(actual.read(), expected.read())
-          with open('a.wasm', 'rb') as binary:
-            url_section_name = bytearray([16]) + bytearray('sourceMappingURL')
-            payload = 'http://example.org/' + jsmap
-            assert len(payload) < 256, 'name too long'
-            url_section_contents = bytearray([len(payload)]) + bytearray(payload)
-            print url_section_name
-            binary_contents = bytearray(binary.read())
-            if url_section_name not in binary_contents:
-              fail_with_error('source map url section not found in binary')
-            if url_section_contents not in binary_contents[binary_contents.index(url_section_name):]:
-              fail_with_error('source map url not found in url section')
+        # skip binary checks for tests that reuse previous modules by name, as that's a wast-only feature
+        if 'exports.wast' in os.path.basename(wast):  # FIXME
+            continue
+
+        # check binary format. here we can verify execution of the final
+        # result, no need for an output verification
+        # some wast files cannot be split:
+        #     * comments.wast: contains characters that are not valid utf-8,
+        #       so our string splitting code fails there
+
+        # FIXME Remove reference type tests from this list after nullref is
+        # implemented in V8
+        if os.path.basename(wast) not in ['comments.wast', 'ref_null.wast', 'ref_is_null.wast', 'ref_func.wast', 'old_select.wast']:
+            split_num = 0
+            actual = ''
+            for module, asserts in support.split_wast(wast):
+                print('        testing split module', split_num)
+                split_num += 1
+                support.write_wast('split.wast', module, asserts)
+                run_spec_test('split.wast')    # before binary stuff - just check it's still ok split out
+                run_opt_test('split.wast')    # also that our optimizer doesn't break on it
+                result_wast = shared.binary_format_check('split.wast', verify_final_result=False, original_wast=wast)
+                # add the asserts, and verify that the test still passes
+                open(result_wast, 'a').write('\n' + '\n'.join(asserts))
+                actual += run_spec_test(result_wast)
+            # compare all the outputs to the expected output
+            check_expected(actual, os.path.join(shared.get_test_dir('spec'), 'expected-output', os.path.basename(wast) + '.log'))
+        else:
+            # handle unsplittable wast files
+            run_spec_test(wast)
 
 
-print '\n[ checking asm2wasm binary reading/writing... ]\n'
+def run_validator_tests():
+    print('\n[ running validation tests... ]\n')
+    # Ensure the tests validate by default
+    cmd = shared.WASM_AS + [os.path.join(shared.get_test_dir('validator'), 'invalid_export.wast')]
+    support.run_command(cmd)
+    cmd = shared.WASM_AS + [os.path.join(shared.get_test_dir('validator'), 'invalid_import.wast')]
+    support.run_command(cmd)
+    cmd = shared.WASM_AS + ['--validate=web', os.path.join(shared.get_test_dir('validator'), 'invalid_export.wast')]
+    support.run_command(cmd, expected_status=1)
+    cmd = shared.WASM_AS + ['--validate=web', os.path.join(shared.get_test_dir('validator'), 'invalid_import.wast')]
+    support.run_command(cmd, expected_status=1)
+    cmd = shared.WASM_AS + ['--validate=none', os.path.join(shared.get_test_dir('validator'), 'invalid_return.wast')]
+    support.run_command(cmd)
+    cmd = shared.WASM_AS + [os.path.join(shared.get_test_dir('validator'), 'invalid_number.wast')]
+    support.run_command(cmd, expected_status=1)
 
-asmjs = os.path.join(options.binaryen_test, 'hello_world.asm.js')
-delete_from_orbit('a.wasm')
-delete_from_orbit('b.wast')
-run_command(ASM2WASM + [asmjs, '-o', 'a.wasm'])
-assert open('a.wasm', 'rb').read()[0] == '\0', 'we emit binary by default'
-run_command(ASM2WASM + [asmjs, '-o', 'b.wast', '-S'])
-assert open('b.wast', 'rb').read()[0] != '\0', 'we emit text with -S'
 
-print '\n[ checking wasm-opt parsing & printing... ]\n'
+def run_gcc_tests():
+    print('\n[ checking native gcc testcases...]\n')
+    if not shared.NATIVECC or not shared.NATIVEXX:
+        shared.fail_with_error('Native compiler (e.g. gcc/g++) was not found in PATH!')
+        return
 
-for t in sorted(os.listdir(os.path.join(options.binaryen_test, 'print'))):
-  if t.endswith('.wast'):
-    print '..', t
-    wasm = os.path.basename(t).replace('.wast', '')
-    cmd = WASM_OPT + [os.path.join(options.binaryen_test, 'print', t), '--print']
-    print '    ', ' '.join(cmd)
-    actual, err = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
-    fail_if_not_identical(actual, open(os.path.join(options.binaryen_test, 'print', wasm + '.txt')).read())
-    cmd = WASM_OPT + [os.path.join(options.binaryen_test, 'print', t), '--print-minified']
-    print '    ', ' '.join(cmd)
-    actual, err = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
-    fail_if_not_identical(actual.strip(), open(os.path.join(options.binaryen_test, 'print', wasm + '.minified.txt')).read().strip())
-
-print '\n[ checking wasm-opt testcases... ]\n'
-
-for t in tests:
-  if t.endswith('.wast') and not t.startswith('spec'):
-    print '..', t
-    t = os.path.join(options.binaryen_test, t)
-    f = t + '.from-wast'
-    cmd = WASM_OPT + [t, '--print']
-    actual = run_command(cmd)
-    actual = actual.replace('printing before:\n', '')
-
-    expected = open(f, 'rb').read()
-    if actual != expected:
-      fail(actual, expected)
-
-    binary_format_check(t, wasm_as_args=['-g']) # test with debuginfo
-    binary_format_check(t, wasm_as_args=[], binary_suffix='.fromBinary.noDebugInfo') # test without debuginfo
-
-    minify_check(t)
-
-print '\n[ checking wasm-dis on provided binaries... ]\n'
-
-for t in tests:
-  if t.endswith('.wasm') and not t.startswith('spec'):
-    print '..', t
-    t = os.path.join(options.binaryen_test, t)
-    cmd = WASM_DIS + [t]
-    if os.path.isfile(t + '.map'): cmd += ['--source-map', t + '.map']
-
-    actual = run_command(cmd)
-
-    with open(t + '.fromBinary') as f:
-      expected = f.read()
-      if actual != expected:
-        fail(actual, expected)
-
-print '\n[ checking wasm-merge... ]\n'
-
-for t in os.listdir(os.path.join('test', 'merge')):
-  if t.endswith(('.wast', '.wasm')):
-    print '..', t
-    t = os.path.join('test', 'merge', t)
-    u = t + '.toMerge'
-    for finalize in [0, 1]:
-      for opt in [0, 1]:
-        cmd = WASM_MERGE + [t, u, '-o', 'a.wast', '-S', '--verbose']
-        if finalize: cmd += ['--finalize-memory-base=1024', '--finalize-table-base=8']
-        if opt: cmd += ['-O']
-        stdout = run_command(cmd)
-        actual = open('a.wast').read()
-        out = t + '.combined'
-        if finalize: out += '.finalized'
-        if opt: out += '.opt'
-        with open(out) as f:
-          fail_if_not_identical(f.read(), actual)
-        with open(out + '.stdout') as f:
-          fail_if_not_identical(f.read(), stdout)
-
-print '\n[ checking wasm-ctor-eval... ]\n'
-
-for t in os.listdir(os.path.join('test', 'ctor-eval')):
-  if t.endswith(('.wast', '.wasm')):
-    print '..', t
-    t = os.path.join('test', 'ctor-eval', t)
-    ctors = open(t + '.ctors').read().strip()
-    cmd = [os.path.join('bin', 'wasm-ctor-eval'), t, '-o', 'a.wast', '-S', '--ctors', ctors]
-    stdout = run_command(cmd)
-    actual = open('a.wast').read()
-    out = t + '.out'
-    with open(out) as f:
-      fail_if_not_identical(f.read(), actual)
-
-print '\n[ checking wasm-shell spec testcases... ]\n'
-
-if len(requested) == 0:
-  BLACKLIST = ['memory.wast', 'binary.wast'] # FIXME we support old and new memory formats, for now, until 0xc, and so can't pass this old-style test.
-  # FIXME to update the spec to 0xd, we need to implement (register "name") for import.wast
-  spec_tests = [os.path.join('spec', t) for t in sorted(os.listdir(os.path.join(options.binaryen_test, 'spec'))) if t not in BLACKLIST]
-else:
-  spec_tests = requested[:]
-
-for t in spec_tests:
-  if t.startswith('spec') and t.endswith('.wast'):
-    print '..', t
-    wast = os.path.join(options.binaryen_test, t)
-
-    # skip checks for some tests
-    if os.path.basename(wast) in ['linking.wast', 'nop.wast', 'stack.wast', 'typecheck.wast', 'unwind.wast']: # FIXME
-      continue
-
-    def run_spec_test(wast):
-      cmd = WASM_SHELL + [wast]
-      # we must skip the stack machine portions of spec tests or apply other extra args
-      extra = {
-      }
-      cmd = cmd + (extra.get(os.path.basename(wast)) or [])
-      return run_command(cmd, stderr=subprocess.PIPE)
-
-    def run_opt_test(wast):
-      # check optimization validation
-      cmd = WASM_OPT + [wast, '-O']
-      run_command(cmd)
-
-    def check_expected(actual, expected):
-      if expected and os.path.exists(expected):
-        expected = open(expected).read()
-        # fix it up, our pretty (i32.const 83) must become compared to a homely 83 : i32
-        def fix(x):
-          x = x.strip()
-          if not x: return x
-          v, t = x.split(' : ')
-          if v.endswith('.'): v = v[:-1] # remove trailing '.'
-          return '(' + t + '.const ' + v + ')'
-        expected = '\n'.join(map(fix, expected.split('\n')))
-        print '       (using expected output)'
-        actual = actual.strip()
-        expected = expected.strip()
-        if actual != expected:
-          fail(actual, expected)
-
-    expected = os.path.join(options.binaryen_test, 'spec', 'expected-output', os.path.basename(wast) + '.log')
-
-    # some spec tests should fail (actual process failure, not just assert_invalid)
-    try:
-      actual = run_spec_test(wast)
-    except Exception, e:
-      if ('wasm-validator error' in str(e) or 'parse exception' in str(e)) and '.fail.' in t:
-        print '<< test failed as expected >>'
-        continue # don't try all the binary format stuff TODO
-      else:
-        fail_with_error(str(e))
-
-    check_expected(actual, expected)
-
-    # skip binary checks for tests that reuse previous modules by name, as that's a wast-only feature
-    if os.path.basename(wast) in ['exports.wast']: # FIXME
-      continue
-
-    # we must ignore some binary format splits
-    splits_to_skip = {
-        'func.wast': [2],
-        'return.wast': [2]
-    }
-
-    # check binary format. here we can verify execution of the final result, no need for an output verification
-    split_num = 0
-    if os.path.basename(wast) not in []: # avoid some tests with things still being sorted out in the spec
-      actual = ''
-      for module, asserts in split_wast(wast):
-        skip = splits_to_skip.get(os.path.basename(wast)) or []
-        if split_num in skip:
-          print '    skipping split module', split_num - 1
-          split_num += 1
-          continue
-        print '    testing split module', split_num
-        split_num += 1
-        with open('split.wast', 'w') as o: o.write(module + '\n' + '\n'.join(asserts))
-        run_spec_test('split.wast') # before binary stuff - just check it's still ok split out
-        run_opt_test('split.wast') # also that our optimizer doesn't break on it
-        result_wast = binary_format_check('split.wast', verify_final_result=False)
-        # add the asserts, and verify that the test still passes
-        open(result_wast, 'a').write('\n' + '\n'.join(asserts))
-        actual += run_spec_test(result_wast)
-      # compare all the outputs to the expected output
-      check_expected(actual, os.path.join(options.binaryen_test, 'spec', 'expected-output', os.path.basename(wast) + '.log'))
-
-if MOZJS:
-  print '\n[ checking binaryen.js testcases... ]\n'
-
-  for s in sorted(os.listdir(os.path.join(options.binaryen_test, 'binaryen.js'))):
-    if not s.endswith('.js'): continue
-    print s
-    f = open('a.js', 'w')
-    f.write(open(os.path.join(options.binaryen_bin, 'binaryen.js')).read())
-    f.write(open(os.path.join(options.binaryen_test, 'binaryen.js', s)).read())
-    f.close()
-    cmd = [MOZJS, 'a.js']
-    out = run_command(cmd, stderr=subprocess.STDOUT)
-    expected = open(os.path.join(options.binaryen_test, 'binaryen.js', s + '.txt')).read()
-    if expected not in out:
-      fail(out, expected)
-
-s2wasm.test_s2wasm()
-s2wasm.test_linker()
-
-print '\n[ running validation tests... ]\n'
-# Ensure the tests validate by default
-cmd = WASM_AS + [os.path.join(options.binaryen_test, 'validator', 'invalid_export.wast')]
-run_command(cmd)
-cmd = WASM_AS + [os.path.join(options.binaryen_test, 'validator', 'invalid_import.wast')]
-run_command(cmd)
-cmd = WASM_AS + ['--validate=web', os.path.join(options.binaryen_test, 'validator', 'invalid_export.wast')]
-run_command(cmd, expected_status=1)
-cmd = WASM_AS + ['--validate=web', os.path.join(options.binaryen_test, 'validator', 'invalid_import.wast')]
-run_command(cmd, expected_status=1)
-cmd = WASM_AS + ['--validate=none', os.path.join(options.binaryen_test, 'validator', 'invalid_return.wast')]
-run_command(cmd)
-
-if options.torture and options.test_waterfall:
-
-  print '\n[ checking torture testcases... ]\n'
-
-  unexpected_result_count = 0
-
-  import test.waterfall.src.link_assembly_files as link_assembly_files
-  s2wasm_torture_out = os.path.abspath(os.path.join(options.binaryen_test, 's2wasm-torture-out'))
-  if os.path.isdir(s2wasm_torture_out):
-    shutil.rmtree(s2wasm_torture_out)
-  os.mkdir(s2wasm_torture_out)
-  unexpected_result_count += link_assembly_files.run(
-      linker=os.path.abspath(S2WASM_EXE),
-      files=os.path.abspath(os.path.join(options.binaryen_test, 'torture-s', '*.s')),
-      fails=os.path.abspath(os.path.join(options.binaryen_test, 's2wasm_known_gcc_test_failures.txt')),
-      out=s2wasm_torture_out)
-  assert os.path.isdir(s2wasm_torture_out), 'Expected output directory %s' % s2wasm_torture_out
-
-  import test.waterfall.src.execute_files as execute_files
-  unexpected_result_count += execute_files.run(
-      runner=os.path.abspath(WASM_SHELL_EXE),
-      files=os.path.abspath(os.path.join(s2wasm_torture_out, '*.wast')),
-      fails=os.path.abspath(os.path.join(options.binaryen_test, 's2wasm_known_binaryen_shell_test_failures.txt')),
-      out='',
-      wasmjs='')
-
-  shutil.rmtree(s2wasm_torture_out)
-  if unexpected_result_count:
-    fail('%s failures' % unexpected_result_count, '0 failures')
-
-if has_vanilla_emcc and has_vanilla_llvm and 0:
-
-  print '\n[ checking emcc WASM_BACKEND testcases...]\n'
-
-  try:
-    if has_vanilla_llvm:
-      os.environ['LLVM'] = BIN_DIR # use the vanilla LLVM
-    else:
-      # if we did not set vanilla llvm, then we must set this env var to make emcc use the wasm backend.
-      # (if we are using vanilla llvm, things should just work)
-      print '(not using vanilla llvm, so setting env var to tell emcc to use wasm backend)'
-      os.environ['EMCC_WASM_BACKEND'] = '1'
-    VANILLA_EMCC = os.path.join(options.binaryen_test, 'emscripten', 'emcc')
-    # run emcc to make sure it sets itself up properly, if it was never run before
-    command = [VANILLA_EMCC, '-v']
-    print '____' + ' '.join(command)
-    subprocess.check_call(command)
-
-    for c in sorted(os.listdir(os.path.join(options.binaryen_test, 'wasm_backend'))):
-      if not c.endswith('cpp'): continue
-      print '..', c
-      base = c.replace('.cpp', '').replace('.c', '')
-      expected = open(os.path.join(options.binaryen_test, 'wasm_backend', base + '.txt')).read()
-      for opts in [[], ['-O1'], ['-O2']]:
-        only = [] if opts != ['-O1'] or '_only' not in base else ['-s', 'ONLY_MY_CODE=1'] # only my code is a hack we used early in wasm backend dev, which somehow worked, but only with -O1
-        command = [VANILLA_EMCC, '-o', 'a.wasm.js', os.path.join(options.binaryen_test, 'wasm_backend', c)] + opts + only
-        print '....' + ' '.join(command)
-        if os.path.exists('a.wasm.js'): os.unlink('a.wasm.js')
-        subprocess.check_call(command)
-        if NODEJS:
-          print '  (check in node)'
-          cmd = [NODEJS, 'a.wasm.js']
-          out = run_command(cmd)
-          if out.strip() != expected.strip():
-            fail(out, expected)
-  finally:
-    if has_vanilla_llvm:
-      del os.environ['LLVM']
-    else:
-      del os.environ['EMCC_WASM_BACKEND']
-
-print '\n[ checking example testcases... ]\n'
-
-if options.run_gcc_tests:
-  print '\n[ checking native gcc testcases...]\n'  
-  if not NATIVECC or not NATIVEXX:
-    fail_with_error('Native compiler (e.g. gcc/g++) was not found in PATH!')
-  else:
-    for t in sorted(os.listdir(os.path.join(options.binaryen_test, 'example'))):
-      output_file = os.path.join(options.binaryen_bin, 'example')
-      cmd = ['-I' + os.path.join(options.binaryen_root, 'src'), '-g', '-lasmjs', '-lsupport', '-L' + os.path.join(options.binaryen_bin, '..', 'lib'), '-pthread', '-o', output_file]
-      if t.endswith('.txt'):
-        # check if there is a trace in the file, if so, we should build it
-        out = subprocess.Popen([os.path.join('scripts', 'clean_c_api_trace.py'), os.path.join(options.binaryen_test, 'example', t)], stdout=subprocess.PIPE).communicate()[0]
-        if len(out) == 0:
-          print '  (no trace in ', t, ')'
-          continue
-        print '  (will check trace in ', t, ')'
-        src = 'trace.cpp'
-        with open(src, 'w') as o: o.write(out)
-        expected = os.path.join(options.binaryen_test, 'example', t + '.txt')
-      else:
-        src = os.path.join(options.binaryen_test, 'example', t)
-        expected = os.path.join(options.binaryen_test, 'example', '.'.join(t.split('.')[:-1]) + '.txt')
-      if src.endswith(('.c', '.cpp')):
-        # build the C file separately
-        extra = [NATIVECC, src, '-c', '-o', 'example.o',
-                 '-I' + os.path.join(options.binaryen_root, 'src'), '-g', '-L' + os.path.join(options.binaryen_bin, '..', 'lib'), '-pthread']
-        print 'build: ', ' '.join(extra)
-        subprocess.check_call(extra)
-        # Link against the binaryen C library DSO, using an executable-relative rpath
-        cmd = ['example.o', '-lbinaryen'] + cmd + ['-Wl,-rpath=$ORIGIN/../lib']
-      else:
-        continue
-      print '  ', t, src, expected
-      if os.environ.get('COMPILER_FLAGS'):
-        for f in os.environ.get('COMPILER_FLAGS').split(' '):
-          cmd.append(f)
-      cmd = [NATIVEXX, '-std=c++11'] + cmd
-      try:
-        print 'link: ', ' '.join(cmd)
+    for t in sorted(os.listdir(shared.get_test_dir('example'))):
+        output_file = 'example'
+        cmd = ['-I' + os.path.join(shared.options.binaryen_root, 'src'), '-g', '-pthread', '-o', output_file]
+        if t.endswith('.txt'):
+            # check if there is a trace in the file, if so, we should build it
+            out = subprocess.check_output([os.path.join(shared.options.binaryen_root, 'scripts', 'clean_c_api_trace.py'), os.path.join(shared.get_test_dir('example'), t)])
+            if len(out) == 0:
+                print('  (no trace in ', t, ')')
+                continue
+            print('  (will check trace in ', t, ')')
+            src = 'trace.cpp'
+            with open(src, 'wb') as o:
+                o.write(out)
+            expected = os.path.join(shared.get_test_dir('example'), t + '.txt')
+        else:
+            src = os.path.join(shared.get_test_dir('example'), t)
+            expected = os.path.join(shared.get_test_dir('example'), '.'.join(t.split('.')[:-1]) + '.txt')
+        if src.endswith(('.c', '.cpp')):
+            # build the C file separately
+            libpath = os.path.join(os.path.dirname(shared.options.binaryen_bin),  'lib')
+            extra = [shared.NATIVECC, src, '-c', '-o', 'example.o',
+                     '-I' + os.path.join(shared.options.binaryen_root, 'src'), '-g', '-L' + libpath, '-pthread']
+            if src.endswith('.cpp'):
+                extra += ['-std=c++14']
+            if os.environ.get('COMPILER_FLAGS'):
+                for f in os.environ.get('COMPILER_FLAGS').split(' '):
+                    extra.append(f)
+            print('build: ', ' '.join(extra))
+            subprocess.check_call(extra)
+            # Link against the binaryen C library DSO, using an executable-relative rpath
+            cmd = ['example.o', '-L' + libpath, '-lbinaryen'] + cmd + ['-Wl,-rpath,' + libpath]
+        else:
+            continue
+        print('  ', t, src, expected)
+        if os.environ.get('COMPILER_FLAGS'):
+            for f in os.environ.get('COMPILER_FLAGS').split(' '):
+                cmd.append(f)
+        cmd = [shared.NATIVEXX, '-std=c++14'] + cmd
+        print('link: ', ' '.join(cmd))
         subprocess.check_call(cmd)
-        print 'run...', output_file
-        proc = subprocess.Popen([output_file], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        actual, err = proc.communicate()
-        assert proc.returncode == 0, [proc.returncode, actual, err]
-      finally:
+        print('run...', output_file)
+        actual = subprocess.check_output([os.path.abspath(output_file)]).decode('utf-8')
         os.remove(output_file)
         if sys.platform == 'darwin':
-          # Also removes debug directory produced on Mac OS
-          shutil.rmtree(output_file + '.dSYM')
+            # Also removes debug directory produced on Mac OS
+            shutil.rmtree(output_file + '.dSYM')
 
-      expected = open(expected).read()
-      if actual != expected:
-        fail(actual, expected)
+        shared.fail_if_not_identical_to_file(actual, expected)
 
-if EMCC:
 
-  if MOZJS and 0:
+def run_unittest():
+    print('\n[ checking unit tests...]\n')
 
-    print '\n[ checking native wasm support ]\n'
+    # equivalent to `python -m unittest discover -s ./test -v`
+    suite = unittest.defaultTestLoader.discover(os.path.dirname(shared.options.binaryen_test))
+    result = unittest.TextTestRunner(verbosity=2, failfast=shared.options.abort_on_first_failure).run(suite)
+    shared.num_failures += len(result.errors) + len(result.failures)
+    if shared.options.abort_on_first_failure and shared.num_failures:
+        raise Exception("unittest failed")
 
-    command = [EMCC, '-o', 'a.wasm.js', '-s', 'BINARYEN=1', os.path.join(options.binaryen_test, 'hello_world.c'), '-s', 'BINARYEN_METHOD="native-wasm"', '-s', 'BINARYEN_SCRIPTS="spidermonkify.py"']
-    print ' '.join(command)
-    subprocess.check_call(command)
 
-    cmd = [MOZJS, 'a.wasm.js']
-    out = run_command(cmd)
-    assert 'hello, world!' in out, out
+TEST_SUITES = OrderedDict([
+    ('help-messages', run_help_tests),
+    ('wasm-opt', run_wasm_opt_tests),
+    ('asm2wasm', asm2wasm.test_asm2wasm),
+    ('asm2wasm-binary', asm2wasm.test_asm2wasm_binary),
+    ('wasm-dis', run_wasm_dis_tests),
+    ('crash', run_crash_tests),
+    ('dylink', run_dylink_tests),
+    ('ctor-eval', run_ctor_eval_tests),
+    ('wasm-metadce', run_wasm_metadce_tests),
+    ('wasm-reduce', run_wasm_reduce_tests),
+    ('spec', run_spec_tests),
+    ('binaryenjs', binaryenjs.test_binaryen_js),
+    ('lld', lld.test_wasm_emscripten_finalize),
+    ('wasm2js', wasm2js.test_wasm2js),
+    ('validator', run_validator_tests),
+    ('gcc', run_gcc_tests),
+    ('unit', run_unittest),
+])
 
-    proc = subprocess.Popen([NODEJS, 'a.wasm.js'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    out, err = proc.communicate()
-    assert proc.returncode != 0, 'should fail on no wasm support'
-    assert 'no native wasm support detected' in err, err
 
-  print '\n[ checking wasm.js methods... ]\n'
+# Run all the tests
+def main():
+    if shared.options.list_suites:
+        for suite in TEST_SUITES.keys():
+            print(suite)
+        return 0
 
-  for method_init in ['interpret-asm2wasm', 'interpret-s-expr', 'asmjs', 'interpret-binary', 'asmjs,interpret-binary', 'interpret-binary,asmjs']:
-    # check success and failure for simple modes, only success for combined/fallback ones
-    for success in [1, 0] if ',' not in method_init else [1]:
-      method = method_init
-      command = [EMCC, '-o', 'a.wasm.js', '-s', 'BINARYEN=1', os.path.join(options.binaryen_test, 'hello_world.c') ]
-      command += ['-s', 'BINARYEN_METHOD="' + method + '"']
-      print method, ' : ', ' '.join(command), ' => ', success
-      subprocess.check_call(command)
+    for test in shared.requested or TEST_SUITES.keys():
+        TEST_SUITES[test]()
 
-      see_polyfill =  'var WasmJS = ' in open('a.wasm.js').read()
+    # Check/display the results
+    if shared.num_failures == 0:
+        print('\n[ success! ]')
 
-      if method and 'interpret' not in method:
-        assert not see_polyfill, 'verify polyfill was not added - we specified a method, and it does not need it'
-      else:
-        assert see_polyfill, 'we need the polyfill'
+    if shared.warnings:
+        print('\n' + '\n'.join(shared.warnings))
 
-      def break_cashew():
-        asm = open('a.wasm.asm.js').read()
-        asm = asm.replace('"almost asm"', '"use asm"; var not_in_asm = [].length + (true || { x: 5 }.x);')
-        asm = asm.replace("'almost asm'", '"use asm"; var not_in_asm = [].length + (true || { x: 5 }.x);')
-        with open('a.wasm.asm.js', 'w') as o: o.write(asm)
-      if method.startswith('interpret-asm2wasm'):
-        delete_from_orbit('a.wasm.wast') # we should not need the .wast
-        if not success:
-          break_cashew() # we need cashew
-      elif method.startswith('interpret-s-expr'):
-        delete_from_orbit('a.wasm.asm.js') # we should not need the .asm.js
-        if not success:
-          delete_from_orbit('a.wasm.wast')
-      elif method.startswith('asmjs'):
-        delete_from_orbit('a.wasm.wast') # we should not need the .wast
-        break_cashew() # we don't use cashew, so ok to break it
-        if not success:
-          delete_from_orbit('a.wasm.js')
-      elif method.startswith('interpret-binary'):
-        delete_from_orbit('a.wasm.wast') # we should not need the .wast
-        delete_from_orbit('a.wasm.asm.js') # we should not need the .asm.js
-        if not success:
-          delete_from_orbit('a.wasm.wasm')
-      else:
-        1/0
-      if NODEJS:
-        proc = subprocess.Popen([NODEJS, 'a.wasm.js'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        out, err = proc.communicate()
-        if success:
-          assert proc.returncode == 0, err
-          assert 'hello, world!' in out, out
-        else:
-          assert proc.returncode != 0, err
-          assert 'hello, world!' not in out, out
+    if shared.num_failures > 0:
+        print('\n[ ' + str(shared.num_failures) + ' failures! ]')
+        return 1
 
-  print '\n[ checking wasm.js testcases... ]\n'
+    return 0
 
-  for c in tests:
-    if c.endswith(('.c', '.cpp')):
-      print '..', c
-      base = c.replace('.cpp', '').replace('.c', '')
-      post = base + '.post.js'
-      try:
-        post = open(os.path.join(options.binaryen_test, post)).read()
-      except:
-        post = None
-      expected = open(os.path.join(options.binaryen_test, base + '.txt')).read()
-      emcc = os.path.join(options.binaryen_test, base + '.emcc')
-      extra = []
-      if os.path.exists(emcc):
-        extra = json.loads(open(emcc).read())
-      if os.path.exists('a.normal.js'): os.unlink('a.normal.js')
-      for opts in [[], ['-O1'], ['-O2'], ['-O3'], ['-Oz']]:
-        for method in ['interpret-asm2wasm', 'interpret-s-expr', 'interpret-binary']:
-          command = [EMCC, '-o', 'a.wasm.js', '-s', 'BINARYEN=1', os.path.join(options.binaryen_test, c)] + opts + extra
-          command += ['-s', 'BINARYEN_METHOD="' + method + '"']
-          command += ['-s', 'BINARYEN_TRAP_MODE="js"']
-          print '....' + ' '.join(command)
-          subprocess.check_call(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-          if post:
-            open('a.wasm.js', 'a').write(post)
-          else:
-            print '     (no post)'
-          for which in ['wasm']:
-            print '......', which
-            try:
-              args = json.loads(open(os.path.join(options.binaryen_test, base + '.args')).read())
-            except:
-              args = []
-              print '     (no args)'
 
-            def execute():
-              if NODEJS:
-                cmd = [NODEJS, 'a.' + which + '.js'] + args
-                out = run_command(cmd)
-                if out.strip() != expected.strip():
-                  fail(out, expected)
-
-            execute()
-
-            if method in ['interpret-s-expr']:
-              # binary and back
-              shutil.copyfile('a.wasm.wast', 'a.wasm.original.wast')
-              recreated = binary_format_check('a.wasm.wast', verify_final_result=False)
-              shutil.copyfile(recreated, 'a.wasm.wast')
-              execute()
-
-if num_failures == 0:
-  print '\n[ success! ]'
-
-if warnings:
-  print '\n' + '\n'.join(warnings)
-
-if num_failures > 0:
-  print '\n[ ' + str(num_failures) + ' failures! ]'
-
-sys.exit(num_failures)
+if __name__ == '__main__':
+    sys.exit(main())

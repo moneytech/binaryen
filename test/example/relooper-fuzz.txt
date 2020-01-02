@@ -1,12 +1,12 @@
 (module
- (type $i (func (result i32)))
- (type $v (func))
- (type $vi (func (param i32)))
+ (type $none_=>_none (func))
+ (type $i32_=>_none (func (param i32)))
+ (type $none_=>_i32 (func (result i32)))
  (import "spectest" "print" (func $print (param i32)))
  (memory $0 1 1)
  (export "mem" (memory $0))
  (start $main)
- (func $check (type $i) (result i32)
+ (func $check (; 1 ;) (result i32)
   (if
    (i32.eq
     (i32.load
@@ -41,7 +41,7 @@
    )
   )
  )
- (func $main (type $v)
+ (func $main (; 2 ;)
   (local $0 i32)
   (local $1 i32)
   (i32.store
@@ -160,20 +160,20 @@
        (call $print
         (i32.const 0)
        )
-       (set_local $0
+       (local.set $0
         (call $check)
        )
       )
       (if
        (i32.eq
         (i32.rem_u
-         (get_local $0)
+         (local.get $0)
          (i32.const 2)
         )
         (i32.const 0)
        )
        (block
-        (set_local $1
+        (local.set $1
          (i32.const 6)
         )
         (br $block$6$break)
@@ -183,7 +183,7 @@
          (call $print
           (i32.const 8)
          )
-         (set_local $0
+         (local.set $0
           (call $check)
          )
         )
@@ -199,32 +199,32 @@
     (block $block$5$break0
      (if
       (i32.eq
-       (get_local $1)
+       (local.get $1)
        (i32.const 6)
       )
       (block
-       (set_local $1
+       (local.set $1
         (i32.const 0)
        )
        (block
         (call $print
          (i32.const 5)
         )
-        (set_local $0
+        (local.set $0
          (call $check)
         )
        )
        (if
         (i32.eq
          (i32.rem_u
-          (get_local $0)
+          (local.get $0)
           (i32.const 2)
          )
          (i32.const 0)
         )
         (br $shape$3$continue)
         (block
-         (set_local $1
+         (local.set $1
           (i32.const 6)
          )
          (br $shape$3$continue)
@@ -239,14 +239,14 @@
        (call $print
         (i32.const 4)
        )
-       (set_local $0
+       (local.set $0
         (call $check)
        )
       )
       (if
        (i32.eq
         (i32.rem_u
-         (get_local $0)
+         (local.get $0)
          (i32.const 3)
         )
         (i32.const 0)
@@ -255,13 +255,13 @@
        (if
         (i32.eq
          (i32.rem_u
-          (get_local $0)
+          (local.get $0)
           (i32.const 3)
          )
          (i32.const 1)
         )
         (block
-         (set_local $1
+         (local.set $1
           (i32.const 6)
          )
          (br $shape$3$continue)
@@ -275,12 +275,12 @@
        (call $print
         (i32.const 2)
        )
-       (set_local $0
+       (local.set $0
         (call $check)
        )
       )
       (block
-       (set_local $1
+       (local.set $1
         (i32.const 6)
        )
        (br $shape$3$continue)
@@ -292,14 +292,14 @@
  )
 )
 (module
- (type $i (func (result i32)))
- (type $v (func))
- (type $vi (func (param i32)))
+ (type $none_=>_none (func))
+ (type $i32_=>_none (func (param i32)))
+ (type $none_=>_i32 (func (result i32)))
  (import "spectest" "print" (func $print (param i32)))
  (memory $0 1 1)
  (export "mem" (memory $0))
  (start $main)
- (func $check (type $i) (result i32)
+ (func $check (; 1 ;) (; has Stack IR ;) (result i32)
   (if
    (i32.eq
     (i32.load
@@ -334,7 +334,7 @@
    )
   )
  )
- (func $main (type $v)
+ (func $main (; 2 ;) (; has Stack IR ;)
   (local $0 i32)
   (local $1 i32)
   (i32.store
@@ -449,9 +449,9 @@
    (i32.const 0)
   )
   (if
-   (i32.rem_u
+   (i32.and
     (call $check)
-    (i32.const 2)
+    (i32.const 1)
    )
    (block
     (call $print
@@ -461,18 +461,18 @@
      (call $check)
     )
    )
-   (set_local $0
+   (local.set $0
     (i32.const 6)
    )
   )
   (loop $shape$3$continue
    (if
     (i32.eq
-     (get_local $0)
+     (local.get $0)
      (i32.const 6)
     )
     (block
-     (set_local $0
+     (local.set $0
       (i32.const 0)
      )
      (call $print
@@ -480,13 +480,13 @@
      )
      (br_if $shape$3$continue
       (i32.eqz
-       (i32.rem_u
+       (i32.and
         (call $check)
-        (i32.const 2)
+        (i32.const 1)
        )
       )
      )
-     (set_local $0
+     (local.set $0
       (i32.const 6)
      )
      (br $shape$3$continue)
@@ -498,7 +498,7 @@
    (br_if $shape$3$continue
     (i32.eqz
      (i32.rem_u
-      (tee_local $1
+      (local.tee $1
        (call $check)
       )
       (i32.const 3)
@@ -508,13 +508,13 @@
    (if
     (i32.eq
      (i32.rem_u
-      (get_local $1)
+      (local.get $1)
       (i32.const 3)
      )
      (i32.const 1)
     )
     (block
-     (set_local $0
+     (local.set $0
       (i32.const 6)
      )
      (br $shape$3$continue)
@@ -526,7 +526,7 @@
      (drop
       (call $check)
      )
-     (set_local $0
+     (local.set $0
       (i32.const 6)
      )
      (br $shape$3$continue)

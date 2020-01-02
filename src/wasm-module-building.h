@@ -17,14 +17,20 @@
 #ifndef wasm_wasm_module_building_h
 #define wasm_wasm_module_building_h
 
-#include <wasm.h>
 #include <support/threads.h>
+#include <wasm.h>
 
 namespace wasm {
 
 #ifdef BINARYEN_THREAD_DEBUG
 static std::mutex debug;
-#define DEBUG_THREAD(x) { std::lock_guard<std::mutex> lock(debug); std::cerr << "[OptimizingIncrementalModuleBuilder Threading (thread: " << std::this_thread::get_id()  << ")] " << x; std::cerr << '\n'; }
+#define DEBUG_THREAD(x)                                                        \
+  {                                                                            \
+    std::lock_guard<std::mutex> lock(debug);                                   \
+    std::cerr << "[OptimizingIncrementalModuleBuilder Threading (thread: "     \
+              << std::this_thread::get_id() << ")] " << x;                     \
+    std::cerr << '\n';                                                         \
+  }
 #else
 #define DEBUG_THREAD(x)
 #endif
@@ -35,9 +41,12 @@ static std::mutex debug;
 // Helps build wasm modules efficiently. If you build a module by
 // adding function by function, and you want to optimize them, this class
 // starts optimizing using worker threads *while you are still adding*.
-// It runs function optimization passes at that time, and then at the end
-// it runs global module-level optimization passes. The result is a fully
-// optimized module, optimized while being generated.
+// It runs function optimization passes at that time. This does not
+// run global optimization after that by default, but you can do that
+// to by calling optimizeGlobally(), which runs the the global post-passes
+// (we can't run the pre-passes, as they must be run before function
+// passes, and no such time is possible here given that we receive
+// functions one by one and optimize them).
 //
 // This might also be faster than normal module optimization since it
 // runs all passes on each function, then goes on to the next function
@@ -62,25 +71,30 @@ static std::mutex debug;
 //    * workers transform functions into nullptrs, and optimize them
 //    * we keep an atomic count of the number of active workers and
 //      the number of optimized functions.
-//    * after adding a function, the main thread wakes up workers if
+//    * after adding a function, the main thread notifys up workers if
 //      it calculates there is work for them.
 //    * a lock is used for going to sleep and waking up.
 // Locking should be rare, as optimization is
 // generally slower than generation; in the optimal case, we never
 // lock beyond the first step, and all further work is lock-free.
 //
+// N.B.: Optimizing functions in parallel with adding functions is possible,
+//       but the rest of the global state of the module should be fixed,
+//       such as globals, imports, etc. Function-parallel optimization passes
+//       may read (but not modify) those fields.
 
 class OptimizingIncrementalModuleBuilder {
   Module* wasm;
   uint32_t numFunctions;
   PassOptions passOptions;
-  std::function<void (PassRunner&)> addPrePasses;
+  std::function<void(PassRunner&)> addPrePasses;
   Function* endMarker;
   std::atomic<Function*>* list;
   uint32_t nextFunction; // only used on main thread
   uint32_t numWorkers;
   std::vector<std::unique_ptr<std::thread>> threads;
-  std::atomic<uint32_t> liveWorkers, activeWorkers, availableFuncs, finishedFuncs;
+  std::atomic<uint32_t> liveWorkers, activeWorkers, availableFuncs,
+    finishedFuncs;
   std::mutex mutex;
   std::condition_variable condition;
   bool finishing;
@@ -88,12 +102,20 @@ class OptimizingIncrementalModuleBuilder {
   bool validateGlobally;
 
 public:
-  // numFunctions must be equal to the number of functions allocated, or higher. Knowing
-  // this bounds helps avoid locking.
-  OptimizingIncrementalModuleBuilder(Module* wasm, Index numFunctions, PassOptions passOptions, std::function<void (PassRunner&)> addPrePasses, bool debug, bool validateGlobally)
-      : wasm(wasm), numFunctions(numFunctions), passOptions(passOptions), addPrePasses(addPrePasses), endMarker(nullptr), list(nullptr), nextFunction(0),
-        numWorkers(0), liveWorkers(0), activeWorkers(0), availableFuncs(0), finishedFuncs(0),
-        finishing(false), debug(debug), validateGlobally(validateGlobally) {
+  // numFunctions must be equal to the number of functions allocated, or higher.
+  // Knowing this bounds helps avoid locking.
+  OptimizingIncrementalModuleBuilder(
+    Module* wasm,
+    Index numFunctions,
+    PassOptions passOptions,
+    std::function<void(PassRunner&)> addPrePasses,
+    bool debug,
+    bool validateGlobally)
+    : wasm(wasm), numFunctions(numFunctions), passOptions(passOptions),
+      addPrePasses(addPrePasses), endMarker(nullptr), list(nullptr),
+      nextFunction(0), numWorkers(0), liveWorkers(0), activeWorkers(0),
+      availableFuncs(0), finishedFuncs(0), finishing(false), debug(debug),
+      validateGlobally(validateGlobally) {
 
     if (!useWorkers()) {
       // if we shouldn't use threads, don't
@@ -101,7 +123,8 @@ public:
     }
 
     // Before parallelism, create all passes on the main thread here, to ensure
-    // prepareToRun() is called for each pass before we start to optimize functions.
+    // prepareToRun() is called for each pass before we start to optimize
+    // functions.
     {
       PassRunner passRunner(wasm, passOptions);
       addPrePasses(passRunner);
@@ -121,7 +144,9 @@ public:
     // worth it to use threads
     liveWorkers.store(0);
     activeWorkers.store(0);
-    for (uint32_t i = 0; i < numWorkers; i++) { // TODO: one less, and add it at the very end, to not compete with main thread?
+    // TODO: one less, and add it at the very end, to not compete with main
+    // thread?
+    for (uint32_t i = 0; i < numWorkers; i++) {
       createWorker();
     }
     waitUntilAllReady();
@@ -137,18 +162,21 @@ public:
   }
 
   bool useWorkers() {
-    return numFunctions > 0 && !debug && ThreadPool::getNumCores() > 1 && !PassRunner::getPassDebug();
+    return numFunctions > 0 && !debug && ThreadPool::getNumCores() > 1 &&
+           !PassRunner::getPassDebug();
   }
 
   // Add a function to the module, and to be optimized
   void addFunction(Function* func) {
     wasm->addFunction(func);
-    if (!useWorkers()) return; // we optimize at the end in that case
+    if (!useWorkers()) {
+      return; // we optimize at the end in that case
+    }
     queueFunction(func);
-    // wake workers if needed
-    auto wake = availableFuncs.load();
-    for (uint32_t i = 0; i < wake; i++) {
-      wakeWorker();
+    // notify workers if needed
+    auto notify = availableFuncs.load();
+    for (uint32_t i = 0; i < notify; i++) {
+      notifyWorker();
     }
   }
 
@@ -165,16 +193,15 @@ public:
       }
       addPrePasses(passRunner);
       passRunner.addDefaultFunctionOptimizationPasses();
-      passRunner.addDefaultGlobalOptimizationPasses();
       passRunner.run();
-      return;
+    } else {
+      DEBUG_THREAD("finish()ing");
+      assert(nextFunction == numFunctions);
+      notifyAllWorkers();
+      waitUntilAllFinished();
     }
-    DEBUG_THREAD("finish()ing");
-    assert(nextFunction == numFunctions);
-    wakeAllWorkers();
-    waitUntilAllFinished();
-    optimizeGlobally();
-    // TODO: clear side thread allocators from module allocator, as these threads were transient
+    // TODO: clear side thread allocators from module allocator, as these
+    // threads were transient
   }
 
 private:
@@ -183,14 +210,14 @@ private:
     threads.emplace_back(make_unique<std::thread>(workerMain, this));
   }
 
-  void wakeWorker() {
-    DEBUG_THREAD("wake a worker");
+  void notifyWorker() {
+    DEBUG_THREAD("notify a worker");
     std::lock_guard<std::mutex> lock(mutex);
     condition.notify_one();
   }
 
-  void wakeAllWorkers() {
-    DEBUG_THREAD("wake all workers");
+  void notifyAllWorkers() {
+    DEBUG_THREAD("notify all workers");
     std::lock_guard<std::mutex> lock(mutex);
     condition.notify_all();
   }
@@ -199,7 +226,8 @@ private:
     DEBUG_THREAD("wait until all workers are ready");
     std::unique_lock<std::mutex> lock(mutex);
     if (liveWorkers.load() < numWorkers) {
-      condition.wait(lock, [this]() { return liveWorkers.load() == numWorkers; });
+      condition.wait(lock,
+                     [this]() { return liveWorkers.load() == numWorkers; });
     }
   }
 
@@ -213,20 +241,23 @@ private:
       }
     }
     DEBUG_THREAD("joining");
-    for (auto& thread : threads) thread->join();
+    for (auto& thread : threads) {
+      thread->join();
+    }
     DEBUG_THREAD("joined");
   }
 
   void queueFunction(Function* func) {
     DEBUG_THREAD("queue function");
-    assert(nextFunction < numFunctions); // TODO: if we are given more than we expected, use a slower work queue?
+    // TODO: if we are given more than we expected, use a slower work queue?
+    assert(nextFunction < numFunctions);
     list[nextFunction++].store(func);
     availableFuncs++;
   }
 
   void optimizeGlobally() {
     PassRunner passRunner(wasm, passOptions);
-    passRunner.addDefaultGlobalOptimizationPasses();
+    passRunner.addDefaultGlobalOptimizationPostPasses();
     passRunner.run();
   }
 
@@ -236,7 +267,7 @@ private:
     PassRunner passRunner(wasm, passOptions);
     addPrePasses(passRunner);
     passRunner.addDefaultFunctionOptimizationPasses();
-    passRunner.runFunction(func);
+    passRunner.runOnFunction(func);
   }
 
   static void workerMain(OptimizingIncrementalModuleBuilder* self) {
@@ -255,7 +286,8 @@ private:
         self->activeWorkers--;
         {
           std::unique_lock<std::mutex> lock(self->mutex);
-          if (!self->finishing) { // while waiting for the lock, things may have ended
+          // while waiting for the lock, things may have ended
+          if (!self->finishing) {
             self->condition.wait(lock);
           }
         }
